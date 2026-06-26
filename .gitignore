@@ -1,0 +1,22 @@
+# dependencies
+node_modules/
+*/node_modules/
+
+# env
+.env
+*/.env
+!.env.example
+*/.env.example
+
+# local JSON data store (generated at runtime)
+backend/src/data/*.json
+
+# build output
+frontend/dist/
+frontend/dist-electron/
+backend/dist/
+
+# logs & os
+*.log
+.DS_Store
+Thumbs.db

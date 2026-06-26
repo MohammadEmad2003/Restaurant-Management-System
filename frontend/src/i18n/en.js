@@ -1,0 +1,46 @@
+export default {
+  app: { name: 'Bella Cucina', tagline: 'Restaurant Management' },
+  nav: {
+    dashboard: 'Dashboard', orders: 'Orders (POS)', kitchen: 'Kitchen Display',
+    products: 'Products', inventory: 'Inventory', goodsCheck: 'Goods Check',
+    clients: 'Clients', loyalty: 'Loyalty', reservations: 'Reservations',
+    workers: 'Workers', attendance: 'Attendance', scheduling: 'Scheduling',
+    finance: 'Finance', reports: 'Reports', analytics: 'Analytics',
+    branches: 'Branches', audit: 'Audit Logs', settings: 'Settings', sync: 'Sync Status',
+    sectionMain: 'Operations', sectionPeople: 'People', sectionBusiness: 'Business', sectionSystem: 'System',
+  },
+  common: {
+    search: 'Search…', add: 'Add', edit: 'Edit', delete: 'Delete', save: 'Save',
+    cancel: 'Cancel', close: 'Close', confirm: 'Confirm', export: 'Export', print: 'Print',
+    actions: 'Actions', status: 'Status', date: 'Date', total: 'Total', name: 'Name',
+    phone: 'Phone', price: 'Price', quantity: 'Qty', loading: 'Loading…', noData: 'No data yet',
+    active: 'Active', inactive: 'Inactive', all: 'All', view: 'View', online: 'Online', offline: 'Offline',
+    logout: 'Log out', language: 'Language', theme: 'Theme', yes: 'Yes', no: 'No',
+  },
+  login: {
+    title: 'Welcome back', subtitle: 'Sign in to your restaurant workspace',
+    username: 'Username', password: 'Password', signIn: 'Sign In', signingIn: 'Signing in…',
+    demo: 'Demo accounts', admin: 'Admin', cashier: 'Cashier', error: 'Invalid username or password',
+  },
+  dashboard: {
+    title: 'Dashboard', subtitle: "Today's performance at a glance",
+    salesToday: 'Sales Today', salesWeek: 'Sales (7d)', salesMonth: 'Revenue (30d)',
+    netProfit: 'Net Profit', orders: 'Orders', avgOrder: 'Avg Order',
+    inventoryValue: 'Inventory Value', lowStock: 'Low Stock Items', customers: 'Customers',
+    salesTrend: 'Sales Trend (14 days)', bestSellers: 'Best Sellers', categoryMix: 'Category Mix',
+    topCustomers: 'Top Customers', recentOrders: 'Recent Orders', staffOnDuty: 'Staff Productivity',
+    profitMargin: 'Profit Margin', wasteValue: 'Waste Value',
+  },
+  orders: {
+    title: 'Point of Sale', subtitle: 'Create and manage orders',
+    newOrder: 'New Order', menu: 'Menu', cart: 'Cart', empty: 'Cart is empty — tap a product',
+    subtotal: 'Subtotal', checkout: 'Charge', invoice: 'Invoice', customer: 'Customer',
+    walkIn: 'Walk-in', payment: 'Payment', cash: 'Cash', card: 'Card', wallet: 'Wallet',
+    placed: 'Order placed!', history: 'Order History',
+  },
+  status: {
+    completed: 'Completed', pending: 'Pending', preparing: 'Preparing', cancelled: 'Cancelled',
+    ready: 'Ready', new: 'New', served: 'Served', booked: 'Booked', seated: 'Seated',
+    no_show: 'No-show', waitlist: 'Waitlist', paid: 'Paid', unpaid: 'Unpaid',
+  },
+};

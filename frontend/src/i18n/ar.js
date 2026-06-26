@@ -1,0 +1,46 @@
+export default {
+  app: { name: 'بيلا كوتشينا', tagline: 'نظام إدارة المطعم' },
+  nav: {
+    dashboard: 'الرئيسية', orders: 'نقطة البيع', kitchen: 'شاشة المطبخ',
+    products: 'المنتجات', inventory: 'المخزون', goodsCheck: 'جرد المخزون',
+    clients: 'العملاء', loyalty: 'الولاء', reservations: 'الحجوزات',
+    workers: 'الموظفون', attendance: 'الحضور', scheduling: 'الجدولة',
+    finance: 'المالية', reports: 'التقارير', analytics: 'التحليلات',
+    branches: 'الفروع', audit: 'سجل العمليات', settings: 'الإعدادات', sync: 'حالة المزامنة',
+    sectionMain: 'العمليات', sectionPeople: 'الأشخاص', sectionBusiness: 'الأعمال', sectionSystem: 'النظام',
+  },
+  common: {
+    search: 'بحث…', add: 'إضافة', edit: 'تعديل', delete: 'حذف', save: 'حفظ',
+    cancel: 'إلغاء', close: 'إغلاق', confirm: 'تأكيد', export: 'تصدير', print: 'طباعة',
+    actions: 'إجراءات', status: 'الحالة', date: 'التاريخ', total: 'الإجمالي', name: 'الاسم',
+    phone: 'الهاتف', price: 'السعر', quantity: 'الكمية', loading: 'جارٍ التحميل…', noData: 'لا توجد بيانات',
+    active: 'نشط', inactive: 'غير نشط', all: 'الكل', view: 'عرض', online: 'متصل', offline: 'غير متصل',
+    logout: 'تسجيل الخروج', language: 'اللغة', theme: 'السمة', yes: 'نعم', no: 'لا',
+  },
+  login: {
+    title: 'مرحباً بعودتك', subtitle: 'سجّل الدخول إلى مساحة عمل مطعمك',
+    username: 'اسم المستخدم', password: 'كلمة المرور', signIn: 'تسجيل الدخول', signingIn: 'جارٍ الدخول…',
+    demo: 'حسابات تجريبية', admin: 'مدير', cashier: 'كاشير', error: 'اسم المستخدم أو كلمة المرور غير صحيحة',
+  },
+  dashboard: {
+    title: 'لوحة التحكم', subtitle: 'أداء اليوم في لمحة',
+    salesToday: 'مبيعات اليوم', salesWeek: 'مبيعات (٧ أيام)', salesMonth: 'الإيرادات (٣٠ يوم)',
+    netProfit: 'صافي الربح', orders: 'الطلبات', avgOrder: 'متوسط الطلب',
+    inventoryValue: 'قيمة المخزون', lowStock: 'أصناف منخفضة', customers: 'العملاء',
+    salesTrend: 'اتجاه المبيعات (١٤ يوم)', bestSellers: 'الأكثر مبيعاً', categoryMix: 'توزيع الفئات',
+    topCustomers: 'أفضل العملاء', recentOrders: 'أحدث الطلبات', staffOnDuty: 'إنتاجية الموظفين',
+    profitMargin: 'هامش الربح', wasteValue: 'قيمة الهدر',
+  },
+  orders: {
+    title: 'نقطة البيع', subtitle: 'إنشاء وإدارة الطلبات',
+    newOrder: 'طلب جديد', menu: 'القائمة', cart: 'السلة', empty: 'السلة فارغة — اختر منتجاً',
+    subtotal: 'المجموع', checkout: 'تحصيل', invoice: 'فاتورة', customer: 'العميل',
+    walkIn: 'زبون عابر', payment: 'الدفع', cash: 'نقدي', card: 'بطاقة', wallet: 'محفظة',
+    placed: 'تم إنشاء الطلب!', history: 'سجل الطلبات',
+  },
+  status: {
+    completed: 'مكتمل', pending: 'قيد الانتظار', preparing: 'قيد التحضير', cancelled: 'ملغي',
+    ready: 'جاهز', new: 'جديد', served: 'تم التقديم', booked: 'محجوز', seated: 'جالس',
+    no_show: 'لم يحضر', waitlist: 'قائمة انتظار', paid: 'مدفوع', unpaid: 'غير مدفوع',
+  },
+};

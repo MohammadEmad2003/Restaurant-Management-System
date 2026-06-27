@@ -14,10 +14,10 @@ import Loyalty from './pages/Loyalty.jsx';
 import Reservations from './pages/Reservations.jsx';
 import Workers from './pages/Workers.jsx';
 import Attendance from './pages/Attendance.jsx';
+import Clock from './pages/Clock.jsx';
 import Scheduling from './pages/Scheduling.jsx';
 import Finance from './pages/Finance.jsx';
 import Reports from './pages/Reports.jsx';
-import Branches from './pages/Branches.jsx';
 import AuditLogs from './pages/AuditLogs.jsx';
 import Settings from './pages/Settings.jsx';
 import Sync from './pages/Sync.jsx';
@@ -58,12 +58,12 @@ export default function App() {
           <Route path="clients" element={<Clients />} />
           <Route path="loyalty" element={<Loyalty />} />
           <Route path="reservations" element={<Reservations />} />
+          <Route path="clock" element={<Clock />} />
           <Route path="workers" element={<Protected admin><Workers /></Protected>} />
           <Route path="attendance" element={<Protected admin><Attendance /></Protected>} />
           <Route path="scheduling" element={<Protected admin><Scheduling /></Protected>} />
           <Route path="finance" element={<Protected admin><Finance /></Protected>} />
           <Route path="reports" element={<Protected admin><Reports /></Protected>} />
-          <Route path="branches" element={<Protected admin><Branches /></Protected>} />
           <Route path="audit" element={<Protected admin><AuditLogs /></Protected>} />
           <Route path="settings" element={<Protected admin><Settings /></Protected>} />
           <Route path="sync" element={<Sync />} />

@@ -14,7 +14,7 @@ function envelope(record) {
 }
 
 const COLLECTION_MAP = {
-  branches: 'branches', workers: 'workers', goods: 'goods', products: 'products',
+  locations: 'locations', workers: 'workers', goods: 'goods', products: 'products',
   clients: 'clients', orders: 'orders', loyaltyTx: 'loyaltyTx', kdsTickets: 'kdsTickets',
   attendance: 'attendance', purchases: 'purchases', expenses: 'expenses', salaries: 'salaries',
   goodsChecks: 'goodsChecks', reservations: 'reservations', shifts: 'shifts',

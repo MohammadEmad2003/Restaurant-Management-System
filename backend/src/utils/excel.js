@@ -47,6 +47,35 @@ export async function renderReportXlsx(opts) {
   return wb.xlsx.writeBuffer();
 }
 
+/** Build a multi-sheet .xlsx — one worksheet per section. */
+export async function renderMultiReportXlsx({ sections = [] }) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Restaurant Management System';
+  for (const sec of sections) {
+    const safe = String(sec.title || 'Sheet').replace(/[\\/?*[\]:]/g, ' ').slice(0, 31);
+    const ws = wb.addWorksheet(safe || 'Sheet');
+    const columns = sec.columns || [];
+    ws.columns = columns.map((col) => ({ key: col.key, width: col.width || 18 }));
+    const header = ws.getRow(1);
+    columns.forEach((col, i) => {
+      const cell = header.getCell(i + 1);
+      cell.value = col.label;
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF6D28D9' } };
+      cell.alignment = { vertical: 'middle', horizontal: col.align || 'left' };
+    });
+    header.commit();
+    (sec.rows || []).forEach((row) => ws.addRow(columns.map((col) => (col.format ? col.format(row[col.key], row) : row[col.key]))));
+    if (sec.totals) {
+      const totalRow = ws.addRow(columns.map((col, i) => (col.key in sec.totals ? sec.totals[col.key] : (i === 0 ? 'TOTAL' : ''))));
+      totalRow.font = { bold: true };
+      totalRow.eachCell((cell) => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDE9FE' } }; });
+    }
+  }
+  if (!sections.length) wb.addWorksheet('Empty');
+  return wb.xlsx.writeBuffer();
+}
+
 /** Parse an uploaded .xlsx buffer into an array of row objects keyed by header. */
 export async function parseXlsx(buffer) {
   const wb = new ExcelJS.Workbook();
@@ -65,4 +94,4 @@ export async function parseXlsx(buffer) {
   return rows;
 }
 
-export default { renderReportXlsx, parseXlsx };
+export default { renderReportXlsx, renderMultiReportXlsx, parseXlsx };

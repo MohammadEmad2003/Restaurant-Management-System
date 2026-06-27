@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, CalendarClock, Users, UserX } from 'lucide-react';
+import { Plus, CalendarClock, Users, UserX, LogIn, CheckCircle2 } from 'lucide-react';
 import { useFetch } from '../hooks/useApi.js';
 import { api } from '../api/client.js';
 import { useUI } from '../store/ui.js';
@@ -30,7 +30,11 @@ export default function Reservations() {
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
   };
 
-  const noShow = async (id) => { await api.patch(`/reservations/${id}/no-show`); notify('Marked no-show'); refetch(); };
+  const noShow = async (id) => { await api.patch(`/reservations/${id}/no-show`); notify(t('reservations.markedNoShow', 'Marked no-show')); refetch(); };
+  const setStatus = async (id, status) => {
+    try { await api.put(`/reservations/${id}`, { status }); notify(t('reservations.statusUpdated', 'Reservation updated')); refetch(); }
+    catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+  };
 
   if (loading) return <Spinner />;
   const upcoming = [...data].filter((r) => r.dateTime >= Date.now()).sort((a, b) => a.dateTime - b.dateTime);
@@ -45,9 +49,15 @@ export default function Reservations() {
           <div className="muted row" style={{ fontSize: 12.5, gap: 8 }}><span><CalendarClock size={12} /> {datetime(r.dateTime)}</span><span><Users size={12} /> {r.partySize}</span></div>
         </div>
       </div>
-      <div className="row" style={{ gap: 8 }}>
+      <div className="row" style={{ gap: 6 }}>
         <StatusBadge status={r.status} />
-        {showNoShow && r.status === 'booked' && <button className="btn btn--sm btn--danger" onClick={() => noShow(r.id)}><UserX size={13} /></button>}
+        {r.status === 'booked' && (
+          <button className="btn btn--sm" title={t('reservations.seat', 'Seat / Attended')} onClick={() => setStatus(r.id, 'seated')}><LogIn size={13} /> {t('reservations.seat', 'Seat')}</button>
+        )}
+        {(r.status === 'booked' || r.status === 'seated') && (
+          <button className="btn btn--sm" title={t('reservations.complete', 'Complete')} onClick={() => setStatus(r.id, 'completed')}><CheckCircle2 size={13} /> {t('reservations.complete', 'Complete')}</button>
+        )}
+        {r.status === 'booked' && <button className="btn btn--sm btn--danger" title={t('reservations.noShow', 'No-show')} onClick={() => noShow(r.id)}><UserX size={13} /></button>}
       </div>
     </div>
   );

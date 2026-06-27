@@ -85,6 +85,44 @@ export const analyticsService = {
     };
   },
 
+  /**
+   * Revenue, order count and gross profit grouped by the customer's location
+   * (governorate · area). Orders snapshot the location at checkout; older orders
+   * fall back to the linked client record. `from`/`to` bound the date range.
+   */
+  async byLocation({ from, to } = {}) {
+    const [orders, products, goods, clients] = await Promise.all([
+      repo('orders').getAll(), repo('products').getAll(), repo('goods').getAll(), repo('clients').getAll(),
+    ]);
+    const goodById = Object.fromEntries(goods.map((g) => [g.id, g]));
+    const clientById = Object.fromEntries(clients.map((c) => [c.id, c]));
+    const costByProduct = {};
+    for (const p of products) {
+      costByProduct[p.id] = (p.ingredients || []).reduce(
+        (s, ing) => s + (ing.quantityRequired || 0) * (goodById[ing.goodId]?.purchasePrice || 0), 0);
+    }
+    const fromTs = from ? new Date(from).getTime() : -Infinity;
+    const toTs = to ? new Date(to).getTime() + 864e5 : Infinity;
+    const byArea = {};
+    for (const o of orders.filter((x) => x.status === 'completed')) {
+      if (!(o.orderDate >= fromTs && o.orderDate < toTs)) continue;
+      const client = o.clientId ? clientById[o.clientId] : null;
+      const governorate = o.governorate || client?.governorate || '';
+      const area = o.area || client?.area || '';
+      const name = area ? `${governorate ? governorate + ' · ' : ''}${area}` : (governorate || 'Walk-in / Unknown');
+      const key = name;
+      const b = (byArea[key] ||= { name, governorate, area, orders: 0, revenue: 0, profit: 0 });
+      b.orders += 1;
+      b.revenue += o.totalPrice || 0;
+      for (const line of o.products || []) {
+        b.profit += (line.unitPrice - (costByProduct[line.productId] || 0)) * line.quantity;
+      }
+    }
+    return Object.values(byArea)
+      .map((b) => ({ ...b, revenue: +b.revenue.toFixed(2), profit: +b.profit.toFixed(2) }))
+      .sort((a, b) => b.revenue - a.revenue);
+  },
+
   async customers() {
     const clients = await repo('clients').getAll();
     const top = [...clients].sort((a, b) => (b.totalSpent || 0) - (a.totalSpent || 0)).slice(0, 5);
@@ -99,14 +137,15 @@ export const analyticsService = {
 
   /** Everything the admin dashboard needs in one call. */
   async dashboard() {
-    const [sales, finance, inventory, workers, customers] = await Promise.all([
+    const [sales, finance, inventory, workers, customers, locations] = await Promise.all([
       this.sales(),
       financeService.profit({ period: 'monthly' }),
       this.inventory(),
       this.workers(),
       this.customers(),
+      this.byLocation(),
     ]);
-    return { sales, finance, inventory, workers, customers, generatedAt: Date.now() };
+    return { sales, finance, inventory, workers, customers, locations, generatedAt: Date.now() };
   },
 };
 

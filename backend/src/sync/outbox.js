@@ -37,6 +37,14 @@ export const outbox = {
     localStore.set(COLLECTION, rows);
   },
 
+  /** Drop any pending entries for a record we just pushed directly (write-through). */
+  removeFor(collection, recordId) {
+    const rows = localStore.load(COLLECTION).filter(
+      (e) => !(e.collection === collection && e.recordId === recordId),
+    );
+    localStore.set(COLLECTION, rows);
+  },
+
   markAttempt(entryId, error) {
     const rows = localStore.load(COLLECTION);
     const e = rows.find((x) => x.id === entryId);

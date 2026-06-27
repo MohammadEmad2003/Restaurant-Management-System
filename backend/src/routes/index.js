@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 
 import { auth, signToken } from '../middleware/auth.js';
+import { config } from '../config/index.js';
 import { rbac } from '../middleware/rbac.js';
 import { validateBody } from '../middleware/validate.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
@@ -22,7 +23,7 @@ import { reservationService } from '../services/reservationService.js';
 import { kdsService } from '../services/kdsService.js';
 import { loyaltyService } from '../services/loyaltyService.js';
 import { shiftService } from '../services/shiftService.js';
-import { branchService } from '../services/branchService.js';
+import { locationService } from '../services/locationService.js';
 import { salaryService } from '../services/salaryService.js';
 import { createCrudService } from '../services/baseService.js';
 import { syncEngine } from '../sync/syncEngine.js';
@@ -32,6 +33,10 @@ import { renderInvoicePdf } from '../utils/pdf.js';
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 const h = asyncHandler;
+
+/* ─────────────────────── FEATURE FLAGS ─────────────────── */
+// Public so the frontend can gate the navbar (per-customer feature tiers).
+router.get('/features', (req, res) => res.json(config.features));
 
 /* ───────────────────────── AUTH ───────────────────────── */
 router.post('/auth/login', h(async (req, res) => {
@@ -51,10 +56,16 @@ router.patch('/workers/:id/disable', auth, rbac('admin'), h(async (req, res) => 
 router.delete('/workers/:id', auth, rbac('admin'), h(async (req, res) => res.json(await workerService.remove(req.params.id, req.user))));
 
 /* ─────────────────────── ATTENDANCE ────────────────────── */
+// Kiosk: any signed-in device lets a worker clock in/out with their own credentials.
+router.post('/attendance/check', auth, h(async (req, res) => res.json(await attendanceService.markByCredentials(req.body.username, req.body.password))));
 router.post('/attendance/clock-in', auth, h(async (req, res) => res.json(await attendanceService.clockIn(req.body.workerId || req.user.sub, req.user))));
 router.post('/attendance/clock-out', auth, h(async (req, res) => res.json(await attendanceService.clockOut(req.body.workerId || req.user.sub, req.user))));
 router.get('/attendance', auth, rbac('admin'), h(async (req, res) => res.json(await attendanceService.list(req.query))));
 router.get('/attendance/reports/monthly', auth, rbac('admin'), h(async (req, res) => res.json(await attendanceService.monthlyReport(req.query))));
+router.post('/attendance/absences', auth, rbac('admin'), h(async (req, res) => res.json(await attendanceService.markAbsences(req.body, req.user))));
+router.post('/attendance/overtime/bulk', auth, rbac('admin'), h(async (req, res) => res.json(await attendanceService.bulkOvertime(req.body, req.user))));
+router.patch('/attendance/:id/excuse', auth, rbac('admin'), h(async (req, res) => res.json(await attendanceService.setExcuse(req.params.id, req.body, req.user))));
+router.patch('/attendance/:id/overtime', auth, rbac('admin'), h(async (req, res) => res.json(await attendanceService.setOvertime(req.params.id, req.body, req.user))));
 
 /* ───────────────────────── CLIENTS ─────────────────────── */
 router.get('/clients', auth, h(async (req, res) => res.json(await clientService.list(req.query))));
@@ -114,7 +125,10 @@ router.post('/expenses', auth, rbac('admin'), validateBody('expenses'), h(async 
 
 /* ──────────────── SALARIES (admin) ─────────────────────── */
 router.get('/salaries', auth, rbac('admin'), h(async (req, res) => res.json(await salaryService.list(req.query))));
+router.get('/salaries/preview', auth, rbac('admin'), h(async (req, res) => res.json(await salaryService.preview(req.query))));
 router.post('/salaries/generate', auth, rbac('admin'), h(async (req, res) => res.json(await salaryService.generate(req.body, req.user))));
+router.post('/salaries/run', auth, rbac('admin'), h(async (req, res) => res.json(await salaryService.runMonthly(req.body, req.user))));
+router.patch('/salaries/:id/adjust', auth, rbac('admin'), h(async (req, res) => res.json(await salaryService.adjust(req.params.id, req.body, req.user))));
 router.patch('/salaries/:id/pay', auth, rbac('admin'), h(async (req, res) => res.json(await salaryService.markPaid(req.params.id, req.user))));
 
 /* ──────────────────────── ANALYTICS ────────────────────── */
@@ -123,9 +137,21 @@ router.get('/analytics/sales', auth, rbac('admin'), h(async (req, res) => res.js
 router.get('/analytics/inventory', auth, rbac('admin'), h(async (req, res) => res.json(await analyticsService.inventory())));
 router.get('/analytics/workers', auth, rbac('admin'), h(async (req, res) => res.json(await analyticsService.workers())));
 router.get('/analytics/customers', auth, rbac('admin'), h(async (req, res) => res.json(await analyticsService.customers())));
+router.get('/analytics/locations', auth, rbac('admin'), h(async (req, res) => res.json(await analyticsService.byLocation(req.query))));
 
 /* ──────────────────────── REPORTS ──────────────────────── */
-router.get('/reports', auth, rbac('admin'), (req, res) => res.json({ types: reportService.types() }));
+router.get('/reports', auth, rbac('admin'), (req, res) => res.json({ types: reportService.types(), bundles: reportService.bundles() }));
+// Combined multi-section bundles (must be declared before the generic :type routes).
+router.get('/reports/bundle/:name.pdf', auth, rbac('admin'), h(async (req, res) => {
+  const pdf = await reportService.bundlePdf(req.params.name, req.query);
+  res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${req.params.name}-report.pdf"` });
+  res.send(pdf);
+}));
+router.get('/reports/bundle/:name.xlsx', auth, rbac('admin'), h(async (req, res) => {
+  const xlsx = await reportService.bundleXlsx(req.params.name, req.query);
+  res.set({ 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename="${req.params.name}-report.xlsx"` });
+  res.send(Buffer.from(xlsx));
+}));
 router.get('/reports/:type.pdf', auth, rbac('admin'), h(async (req, res) => {
   const pdf = await reportService.pdf(req.params.type, req.query);
   res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${req.params.type}.pdf"` });
@@ -158,15 +184,18 @@ router.post('/loyalty/:clientId/redeem', auth, h(async (req, res) => res.json(aw
 
 /* ──────────────────── SCHEDULING / SHIFTS ──────────────── */
 router.get('/shifts', auth, rbac('admin'), h(async (req, res) => res.json(await shiftService.list(req.query))));
+router.get('/shifts/weekly', auth, rbac('admin'), h(async (req, res) => res.json(await shiftService.weekly())));
 router.get('/shifts/forecast', auth, rbac('admin'), h(async (req, res) => res.json(await shiftService.forecast())));
 router.post('/shifts', auth, rbac('admin'), validateBody('shifts'), h(async (req, res) => res.status(201).json(await shiftService.create(req.body, req.user))));
 router.put('/shifts/:id', auth, rbac('admin'), h(async (req, res) => res.json(await shiftService.update(req.params.id, req.body, req.user))));
 router.delete('/shifts/:id', auth, rbac('admin'), h(async (req, res) => res.json(await shiftService.remove(req.params.id, req.user))));
 
-/* ──────────────────────── BRANCHES ─────────────────────── */
-router.get('/branches', auth, rbac('admin'), h(async (req, res) => res.json(await branchService.list(req.query))));
-router.get('/branches/compare', auth, rbac('admin'), h(async (req, res) => res.json(await branchService.compare())));
-router.post('/branches', auth, rbac('admin'), validateBody('branches'), h(async (req, res) => res.status(201).json(await branchService.create(req.body, req.user))));
+/* ──────────────────────── LOCATIONS ────────────────────── */
+// Admin-managed governorates + areas used for customer profiling & profit-by-area.
+router.get('/locations', auth, h(async (req, res) => res.json(await locationService.list(req.query))));
+router.get('/locations/tree', auth, h(async (req, res) => res.json(await locationService.tree())));
+router.post('/locations', auth, rbac('admin'), validateBody('locations'), h(async (req, res) => res.status(201).json(await locationService.create(req.body, req.user))));
+router.delete('/locations/:id', auth, rbac('admin'), h(async (req, res) => res.json(await locationService.remove(req.params.id, req.user))));
 
 /* ──────────────────────── AUDIT LOGS ───────────────────── */
 router.get('/audit-logs', auth, rbac('admin'), h(async (req, res) => {

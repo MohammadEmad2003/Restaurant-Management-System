@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Minus, Trash2, Printer, Search, Receipt, User } from 'lucide-react';
+import { Plus, Minus, Trash2, Printer, Search, Receipt, User, X, Phone } from 'lucide-react';
 import { useFetch } from '../hooks/useApi.js';
 import { api, openReport } from '../api/client.js';
 import { useUI } from '../store/ui.js';
@@ -13,18 +13,34 @@ export default function Orders() {
   const notify = useUI((s) => s.notify);
   const { data: products, loading } = useFetch('/products', []);
   const { data: clients } = useFetch('/clients', []);
+  const { data: settings } = useFetch('/settings', []);
   const { refetch: refetchOrders } = useFetch('/orders', []);
 
   const [cart, setCart] = useState([]);
   const [cat, setCat] = useState('all');
   const [q, setQ] = useState('');
-  const [clientId, setClientId] = useState('');
+  const [custQuery, setCustQuery] = useState('');
+  const [client, setClient] = useState(null);
   const [payment, setPayment] = useState('cash');
+  const [walkIn, setWalkIn] = useState(false);
+  const [deliveryAddress, setDeliveryAddress] = useState('');
   const [placing, setPlacing] = useState(false);
 
   const categories = useMemo(() => ['all', ...new Set((products || []).map((p) => p.category))], [products]);
   const filtered = (products || []).filter((p) =>
     (cat === 'all' || p.category === cat) && shortName(p.name, lang).toLowerCase().includes(q.toLowerCase()));
+
+  // Look the customer up by phone (or name) instead of an unwieldy dropdown.
+  const norm = (s) => String(s || '').replace(/[\s\-()]/g, '').toLowerCase();
+  const custMatches = useMemo(() => {
+    const term = custQuery.trim();
+    if (client || term.length < 2) return [];
+    const nterm = norm(term);
+    return (clients || []).filter((c) =>
+      (c.phoneNumbers || []).some((p) => norm(p).includes(nterm)) ||
+      shortName(c.name, lang).toLowerCase().includes(term.toLowerCase()),
+    ).slice(0, 6);
+  }, [custQuery, clients, client, lang]);
 
   const add = (p) => setCart((c) => {
     const ex = c.find((x) => x.productId === p.id);
@@ -33,7 +49,11 @@ export default function Orders() {
   });
   const setQty = (id, d) => setCart((c) => c.map((x) => x.productId === id ? { ...x, quantity: Math.max(1, x.quantity + d) } : x));
   const removeLine = (id) => setCart((c) => c.filter((x) => x.productId !== id));
-  const total = cart.reduce((s, x) => s + x.quantity * x.unitPrice, 0);
+  const subtotal = cart.reduce((s, x) => s + x.quantity * x.unitPrice, 0);
+  // Delivery fee applies to phone/delivery customers, waived for walk-ins.
+  const isDelivery = !!client && !walkIn;
+  const deliveryFee = isDelivery ? Number(settings?.deliveryFee || 0) : 0;
+  const total = subtotal + deliveryFee;
 
   const charge = async () => {
     if (!cart.length) return;
@@ -41,12 +61,15 @@ export default function Orders() {
     try {
       const { data } = await api.post('/orders', {
         products: cart.map((x) => ({ productId: x.productId, quantity: x.quantity, unitPrice: x.unitPrice })),
-        clientId: clientId || null,
-        clientName: clients?.find((c) => c.id === clientId)?.name || 'Walk-in',
+        clientId: client?.id || null,
+        clientName: client?.name || 'Walk-in',
+        clientPhone: client?.phoneNumbers?.[0] || null,
+        walkIn, isDelivery,
+        deliveryAddress: isDelivery ? (deliveryAddress || client?.addresses?.[0] || '') : '',
         paymentMethod: payment, status: 'completed',
       });
       notify(`${t('orders.placed')} ${data.invoiceNo}`);
-      setCart([]); setClientId('');
+      setCart([]); setClient(null); setCustQuery(''); setWalkIn(false); setDeliveryAddress('');
       refetchOrders();
       if (window.confirm(`${t('orders.placed')} ${data.invoiceNo}\n${t('common.print')} ${t('orders.invoice')}?`)) {
         openReport(`/orders/${data.id}/invoice.pdf`);
@@ -95,13 +118,54 @@ export default function Orders() {
         {/* Cart */}
         <Card title={<span className="row" style={{ gap: 8 }}><Receipt size={17} /> {t('orders.cart')}</span>} className="card--hover" >
           <div style={{ marginBottom: 12 }}>
-            <div className="search" style={{ borderRadius: 'var(--r-sm)', marginBottom: 10 }}>
-              <User size={15} color="var(--muted)" />
-              <select className="select" style={{ border: 'none', background: 'transparent', padding: '2px 4px' }} value={clientId} onChange={(e) => setClientId(e.target.value)}>
-                <option value="">{t('orders.walkIn')}</option>
-                {(clients || []).map((c) => <option key={c.id} value={c.id}>{shortName(c.name, lang)}</option>)}
-              </select>
-            </div>
+            {client ? (
+              <div className="row between" style={{ padding: '8px 12px', borderRadius: 'var(--r-sm)', background: 'var(--brand-100)', gap: 8 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div className="row" style={{ gap: 6 }}>
+                    <User size={14} color="var(--brand-ink)" />
+                    <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--brand-ink)' }}>{shortName(client.name, lang)}</span>
+                  </div>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                    <span className="ltr">{client.phoneNumbers?.[0] || '—'}</span> · {client.loyaltyPoints || 0} pts · {client.visitCount || 0} visits
+                  </div>
+                </div>
+                <button className="btn btn--icon btn--sm" title={t('orders.walkIn')} onClick={() => { setClient(null); setCustQuery(''); }}>
+                  <X size={14} />
+                </button>
+              </div>
+            ) : (
+              <div style={{ position: 'relative' }}>
+                <div className="search" style={{ borderRadius: 'var(--r-sm)' }}>
+                  <Phone size={15} color="var(--muted)" />
+                  <input
+                    inputMode="tel"
+                    placeholder={t('orders.customerSearch')}
+                    value={custQuery}
+                    onChange={(e) => setCustQuery(e.target.value)}
+                  />
+                </div>
+                {custMatches.length > 0 && (
+                  <div className="card" style={{ position: 'absolute', insetInline: 0, top: 'calc(100% + 4px)', zIndex: 30, padding: 6, maxHeight: 240, overflowY: 'auto' }}>
+                    {custMatches.map((c) => (
+                      <button
+                        key={c.id}
+                        className="btn btn--ghost"
+                        style={{ width: '100%', justifyContent: 'flex-start', textAlign: 'start', padding: '8px 10px' }}
+                        onClick={() => { setClient(c); setCustQuery(''); }}
+                      >
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>{shortName(c.name, lang)}</div>
+                          <div className="muted" style={{ fontSize: 12 }}>{c.phoneNumbers?.[0] || '—'}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {custQuery.trim().length >= 2 && custMatches.length === 0 && (
+                  <div className="muted" style={{ fontSize: 12, padding: '6px 4px 0' }}>{t('orders.customerNone')}</div>
+                )}
+              </div>
+            )}
           </div>
 
           {cart.length === 0 ? (
@@ -131,8 +195,29 @@ export default function Orders() {
             ))}
           </div>
 
+          <button className={`btn btn--sm ${walkIn ? 'btn--primary' : ''}`} style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={() => setWalkIn((w) => !w)}>
+            {walkIn ? '✓ ' : ''}{t('orders.walkInNoFee', 'Walk-in (no delivery fee)')}
+          </button>
+
+          {isDelivery && (
+            <div className="field" style={{ marginBottom: 10 }}>
+              <label>{t('orders.deliveryAddress', 'Delivery Address')}</label>
+              <input className="input" value={deliveryAddress}
+                onChange={(e) => setDeliveryAddress(e.target.value)}
+                placeholder={client?.addresses?.[0] || t('clients.addressPlaceholder', 'Street, building, floor…')} />
+            </div>
+          )}
+
+          <div className="row between" style={{ fontSize: 13.5, margin: '4px 0', color: 'var(--muted)' }}>
+            <span>{t('orders.subtotalLabel', 'Subtotal')}</span><span>{money(subtotal)}</span>
+          </div>
+          {deliveryFee > 0 && (
+            <div className="row between" style={{ fontSize: 13.5, margin: '4px 0', color: 'var(--muted)' }}>
+              <span>{t('orders.delivery', 'Delivery')}</span><span>{money(deliveryFee)}</span>
+            </div>
+          )}
           <div className="row between" style={{ fontSize: 20, fontWeight: 800, margin: '6px 0 14px' }}>
-            <span>{t('orders.subtotal')}</span><span style={{ color: 'var(--brand-700)' }}>{money(total)}</span>
+            <span>{t('common.total')}</span><span style={{ color: 'var(--brand-ink)' }}>{money(total)}</span>
           </div>
           <button className="btn btn--primary" style={{ width: '100%', justifyContent: 'center', padding: 13 }} disabled={!cart.length || placing} onClick={charge}>
             <Printer size={17} /> {t('orders.checkout')} · {money(total)}

@@ -18,6 +18,12 @@ export const config = {
     enabled: process.env.SYNC_ENABLED !== 'false',
     intervalMs: Number(process.env.SYNC_INTERVAL_MS) || 15000,
     conflictPolicy: process.env.CONFLICT_POLICY || 'last-write-wins',
+    // Network calls to Firestore are bounded by these so a lost wifi connection
+    // fails over to the local store quickly instead of hanging on gRPC.
+    probeTimeoutMs: Number(process.env.SYNC_PROBE_TIMEOUT_MS) || 3000,
+    readTimeoutMs: Number(process.env.SYNC_READ_TIMEOUT_MS) || 4000,
+    // After dropping offline, re-probe this often until back online.
+    offlineRetryMs: Number(process.env.SYNC_OFFLINE_RETRY_MS) || 5000,
   },
 
   // Absolute path to the local JSON store directory.
@@ -33,6 +39,22 @@ export const config = {
     privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
   },
 };
+
+/**
+ * Per-feature flags so the same build can be sold in tiers. Each nav page can be
+ * switched off from backend/.env with FEATURE_<PAGE>=false (default: on).
+ */
+const FEATURE_KEYS = [
+  'dashboard', 'orders', 'kitchen', 'products', 'inventory', 'goodsCheck', 'clients',
+  'loyalty', 'reservations', 'clock', 'workers', 'attendance', 'scheduling',
+  'finance', 'reports', 'audit', 'settings', 'sync',
+];
+const featureOn = (key) => {
+  const v = process.env[`FEATURE_${key.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase()}`];
+  if (v === undefined) return true; // default enabled
+  return !['false', '0', 'no', 'off'].includes(String(v).toLowerCase());
+};
+config.features = Object.fromEntries(FEATURE_KEYS.map((k) => [k, featureOn(k)]));
 
 /** True only when enough Firebase Admin credentials are present to connect. */
 export function isFirebaseConfigured() {

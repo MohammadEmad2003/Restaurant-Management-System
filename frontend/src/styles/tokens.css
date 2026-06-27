@@ -3,6 +3,9 @@
    Light + dark themes via [data-theme]. RTL-aware via [dir].
    ============================================================ */
 :root {
+  /* Make native controls (dropdown popups, date pickers, scrollbars) follow the theme */
+  color-scheme: light;
+
   /* Brand */
   --brand-50: #f5f3ff;
   --brand-100: #ede9fe;
@@ -14,15 +17,21 @@
   --brand: var(--brand-600);
   --brand-grad: linear-gradient(135deg, #7c3aed 0%, #a855f7 50%, #ec4899 100%);
 
-  /* Accents */
+  /* Accents — `-soft` is the badge/chip background, `-ink` its text */
   --success: #10b981;
   --success-soft: #d1fae5;
+  --success-ink: #047857;
   --warning: #f59e0b;
   --warning-soft: #fef3c7;
+  --warning-ink: #b45309;
   --danger: #ef4444;
   --danger-soft: #fee2e2;
+  --danger-ink: #b91c1c;
   --info: #3b82f6;
   --info-soft: #dbeafe;
+  --info-ink: #1d4ed8;
+  /* Brand tint used as text (prices, brand badges) */
+  --brand-ink: var(--brand-700);
 
   /* Neutrals (light theme) */
   --bg: #f6f7fb;
@@ -56,6 +65,7 @@
 }
 
 [data-theme='dark'] {
+  color-scheme: dark;
   --bg: #0f1117;
   --bg-elev: #171a23;
   --surface: #1a1d27;
@@ -67,6 +77,24 @@
   --shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.45);
   --shadow-lg: 0 20px 50px rgba(0, 0, 0, 0.55);
+
+  /* Brand tints: translucent in dark so chips/icons sit on dark surfaces,
+     and the text tint lightens so it stays legible. */
+  --brand-50: rgba(139, 92, 246, 0.10);
+  --brand-100: rgba(139, 92, 246, 0.16);
+  --brand-200: rgba(139, 92, 246, 0.28);
+  --brand-700: #c4b5fd;
+  --brand-ink: #c4b5fd;
+
+  /* Soft accent backgrounds + legible text tints for dark surfaces */
+  --success-soft: rgba(16, 185, 129, 0.16);
+  --success-ink: #34d399;
+  --warning-soft: rgba(245, 158, 11, 0.16);
+  --warning-ink: #fbbf24;
+  --danger-soft: rgba(239, 68, 68, 0.16);
+  --danger-ink: #f87171;
+  --info-soft: rgba(59, 130, 246, 0.16);
+  --info-ink: #60a5fa;
 }
 
 /* RTL: use Cairo first for Arabic */

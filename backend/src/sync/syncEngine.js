@@ -3,6 +3,14 @@ import { getFirestore } from '../config/firebase.js';
 import { connectivity } from './connectivity.js';
 import { outbox } from './outbox.js';
 import { logger } from '../utils/logger.js';
+import { withTimeout } from '../utils/withTimeout.js';
+
+/** A network error means we likely lost connectivity — fail over to offline. */
+function isNetworkError(err) {
+  const m = String(err?.message || '');
+  return err?.code === 14 /* UNAVAILABLE */ || err?.code === 4 /* DEADLINE_EXCEEDED */ ||
+    /timed out|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|UNAVAILABLE|network/i.test(m);
+}
 
 /**
  * Drains the outbox to Firestore when online and resolves conflicts.
@@ -61,32 +69,40 @@ class SyncEngine {
     const db = await getFirestore();
     if (!db) { this.running = false; return this.stats; }
 
+    const t = config.sync.readTimeoutMs;
     const entries = outbox.pending();
+    let pushedNow = 0;
     for (const entry of entries) {
       try {
         const ref = db.collection(entry.collection).doc(entry.recordId);
-        const snap = await ref.get();
+        const snap = await withTimeout(ref.get(), t, 'sync get');
         const remote = snap.exists ? snap.data() : null;
 
         if (remote && (remote._sync?.version || 0) > (entry.version || 0)) {
           // Remote is newer → resolve.
           const resolved = this._resolve(entry.payload, remote);
-          await ref.set(resolved);
+          await withTimeout(ref.set(resolved), t, 'sync set');
           this.stats.conflicts += 1;
         } else {
-          await ref.set({ ...entry.payload, _sync: { ...entry.payload._sync, status: 'synced' } });
+          await withTimeout(ref.set({ ...entry.payload, _sync: { ...entry.payload._sync, status: 'synced' } }), t, 'sync set');
         }
         outbox.remove(entry.id);
         this.stats.pushed += 1;
+        pushedNow += 1;
       } catch (err) {
         outbox.markAttempt(entry.id, err.message);
         this.stats.errors += 1;
         logger.error(`Sync push failed for ${entry.collection}/${entry.recordId}: ${err.message}`);
+        // Connection dropped mid-flush: stop, go offline, retry on reconnect.
+        if (isNetworkError(err)) {
+          connectivity.goOffline('sync flush');
+          break;
+        }
       }
     }
     this.stats.lastRun = Date.now();
     this.running = false;
-    if (entries.length) logger.success(`Sync flushed ${entries.length} change(s). Pending: ${outbox.size()}.`);
+    if (pushedNow) logger.success(`Sync flushed ${pushedNow} change(s). Pending: ${outbox.size()}.`);
     return this.stats;
   }
 

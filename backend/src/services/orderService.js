@@ -3,6 +3,7 @@ import { recordAudit } from '../middleware/audit.js';
 import { HttpError } from '../middleware/errorHandler.js';
 import { shortCode } from '../utils/ids.js';
 import { config } from '../config/index.js';
+import { settingsService } from './settingsService.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -53,12 +54,47 @@ export const orderService = {
 
   async create(data, user) {
     const { priced, total } = await priceLines(data.products || []);
+
+    // Snapshot the customer's name + phone onto the order so the receipt and
+    // history stay correct even if the client record later changes or is offline.
+    let clientName = data.clientName || 'Walk-in';
+    let clientPhone = data.clientPhone || null;
+    let governorate = data.governorate || '';
+    let area = data.area || '';
+    if (data.clientId) {
+      const client = await repo('clients').getById(data.clientId);
+      if (client) {
+        clientName = client.name || clientName;
+        clientPhone = (client.phoneNumbers || [])[0] || clientPhone;
+        governorate = governorate || client.governorate || '';
+        area = area || client.area || '';
+      }
+    }
+
+    // Delivery fee: applied to phone/delivery orders, waived for walk-ins. The
+    // fee amount is controlled by the admin in Settings.
+    const settings = await settingsService.get();
+    const walkIn = !!data.walkIn;
+    const isDelivery = !walkIn && (data.isDelivery ?? !!clientPhone);
+    const deliveryFee = isDelivery ? +(settings.deliveryFee || 0) : 0;
+    const grandTotal = +(total + deliveryFee).toFixed(2);
+
     const order = await repo('orders').create({
       ...data,
+      clientName,
+      clientPhone,
+      governorate,
+      area,
+      deliveryAddress: data.deliveryAddress || '',
+      walkIn,
+      isDelivery,
+      deliveryFee,
+      subtotal: total,
       invoiceNo: shortCode('INV'),
       products: priced,
-      totalPrice: total,
+      totalPrice: grandTotal,
       cashierId: data.cashierId || user?.sub,
+      cashierName: data.cashierName || user?.name || null,
       orderDate: data.orderDate || Date.now(),
       status: data.status || 'completed',
     });

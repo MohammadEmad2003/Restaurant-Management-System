@@ -9,10 +9,14 @@ import { money } from '../utils/format.js';
 export default function Finance() {
   const { t } = useTranslation();
   const [period, setPeriod] = useState('daily');
-  const { data: income, loading } = useFetch(`/finance/income?period=${period}`, [period]);
-  const { data: expenses } = useFetch(`/finance/expenses?period=${period}`, [period]);
-  const { data: profit } = useFetch('/finance/profit?period=monthly', []);
-  const { data: cashflow } = useFetch(`/finance/cashflow?period=${period}`, [period]);
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const rangeQ = `${from ? `&from=${from}` : ''}${to ? `&to=${to}` : ''}`;
+  const { data: income, loading } = useFetch(`/finance/income?period=${period}${rangeQ}`, [period, from, to]);
+  const { data: expenses } = useFetch(`/finance/expenses?period=${period}${rangeQ}`, [period, from, to]);
+  const { data: profit } = useFetch(`/finance/profit?period=${period}${rangeQ}`, [period, from, to]);
+  const { data: cashflow } = useFetch(`/finance/cashflow?period=${period}${rangeQ}`, [period, from, to]);
+  const { data: locations } = useFetch(`/analytics/locations?${rangeQ.slice(1)}`, [from, to]);
 
   if (loading || !income) return <Spinner />;
 
@@ -20,11 +24,17 @@ export default function Finance() {
 
   return (
     <div className="fade-in">
-      <PageHeader title={t('nav.finance')} subtitle="Income, expenses, profit & cash flow">
+      <PageHeader title={t('nav.finance')} subtitle={t('finance.subtitle', 'Income, expenses, profit & cash flow')}>
         <div className="chip-row">
           {['daily', 'weekly', 'monthly', 'annual'].map((p) => (
-            <button key={p} className={`btn btn--sm ${period === p ? 'btn--primary' : ''}`} onClick={() => setPeriod(p)} style={{ textTransform: 'capitalize' }}>{p}</button>
+            <button key={p} className={`btn btn--sm ${period === p ? 'btn--primary' : ''}`} onClick={() => setPeriod(p)}>{t(`finance.${p}`, p)}</button>
           ))}
+        </div>
+        <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+          <input className="input ltr" type="date" value={from} onChange={(e) => setFrom(e.target.value)} title={t('reports.from', 'From')} style={{ padding: '6px 8px' }} />
+          <span className="muted">→</span>
+          <input className="input ltr" type="date" value={to} onChange={(e) => setTo(e.target.value)} title={t('reports.to', 'To')} style={{ padding: '6px 8px' }} />
+          {(from || to) && <button className="btn btn--sm" onClick={() => { setFrom(''); setTo(''); }}>{t('reports.clear', 'Clear')}</button>}
         </div>
       </PageHeader>
 
@@ -63,7 +73,23 @@ export default function Finance() {
         </Card>
       </div>
 
-      <Card title="Expense Breakdown">
+      <Card title={t('finance.byLocation', 'Profit & Orders by Location')} style={{ marginBottom: 18 }}>
+        <ResponsiveContainer width="100%" height={280}>
+          <BarChart data={locations || []} margin={{ left: -14 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+            <XAxis dataKey="name" tick={{ fontSize: 10.5, fill: 'var(--muted)' }} tickFormatter={undefined} />
+            <YAxis yAxisId="l" tick={{ fontSize: 11, fill: 'var(--muted)' }} />
+            <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 11, fill: 'var(--muted)' }} />
+            <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid var(--border)' }} />
+            <Legend />
+            <Bar yAxisId="l" dataKey="revenue" name="Revenue" fill="#10b981" radius={[6, 6, 0, 0]} />
+            <Bar yAxisId="l" dataKey="profit" name="Profit" fill="#7c3aed" radius={[6, 6, 0, 0]} />
+            <Bar yAxisId="r" dataKey="orders" name="Orders" fill="#06b6d4" radius={[6, 6, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </Card>
+
+      <Card title={t('finance.expenseBreakdown', 'Expense Breakdown')}>
         <div className="grid grid--3">
           {expByType.map((e) => (
             <div key={e.name} className="card" style={{ padding: 16 }}>

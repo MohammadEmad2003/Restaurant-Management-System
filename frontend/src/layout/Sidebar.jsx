@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../store/auth.js';
+import { useFetch } from '../hooks/useApi.js';
 import {
   LayoutDashboard, ShoppingCart, ChefHat, Pizza, Boxes, ClipboardCheck,
   Users, Gift, CalendarClock, UserCog, Clock, CalendarRange,
-  Wallet, FileBarChart, Building2, ScrollText, Settings as Cog, RefreshCw, UtensilsCrossed,
+  Wallet, FileBarChart, ScrollText, Settings as Cog, RefreshCw, UtensilsCrossed,
 } from 'lucide-react';
 
 const SECTIONS = [
@@ -32,6 +33,7 @@ const SECTIONS = [
       { to: '/clients', icon: Users, label: 'clients' },
       { to: '/loyalty', icon: Gift, label: 'loyalty' },
       { to: '/reservations', icon: CalendarClock, label: 'reservations' },
+      { to: '/clock', icon: Clock, label: 'clock' },
       { to: '/workers', icon: UserCog, label: 'workers', admin: true },
       { to: '/attendance', icon: Clock, label: 'attendance', admin: true },
       { to: '/scheduling', icon: CalendarRange, label: 'scheduling', admin: true },
@@ -40,7 +42,6 @@ const SECTIONS = [
   {
     key: 'sectionSystem',
     items: [
-      { to: '/branches', icon: Building2, label: 'branches', admin: true },
       { to: '/audit', icon: ScrollText, label: 'audit', admin: true },
       { to: '/sync', icon: RefreshCw, label: 'sync' },
       { to: '/settings', icon: Cog, label: 'settings', admin: true },
@@ -51,6 +52,7 @@ const SECTIONS = [
 export default function Sidebar({ open }) {
   const { t } = useTranslation();
   const isAdmin = useAuth((s) => s.user?.role === 'admin');
+  const { data: features } = useFetch('/features', []); // per-customer feature tiers (backend .env)
 
   return (
     <aside style={{
@@ -71,7 +73,7 @@ export default function Sidebar({ open }) {
         </div>
 
         {SECTIONS.map((section) => {
-          const items = section.items.filter((i) => !i.admin || isAdmin);
+          const items = section.items.filter((i) => (!i.admin || isAdmin) && (!features || features[i.label] !== false));
           if (!items.length) return null;
           return (
             <div key={section.key} style={{ marginBottom: 18 }}>

@@ -10,30 +10,42 @@ export const schemas = {
   workers: {
     name: t('string', { required: true }),
     username: t('string', { required: true }),
-    role: t('string', { required: true, enum: ['admin', 'cashier'] }),
+    role: t('string', { required: true, enum: ['admin', 'cashier', 'chef'] }),
     phone: t('string'),
     salary: t('number', { min: 0 }),
     hireDate: t('string'),
     status: t('string', { enum: ['active', 'inactive'], default: 'active' }),
-    branchId: t('string'),
   },
   attendance: {
     workerId: t('string', { required: true }),
+    workerName: t('string'),
     checkInTime: t('number'),
     checkOutTime: t('number'),
     date: t('string', { required: true }),
     totalHours: t('number'),
     overtimeHours: t('number'),
+    shift: t('string', { enum: ['day', 'night'] }), // day = 12:00→00:00, night = 00:00→12:00
+    lateMinutes: t('number', { default: 0 }),
+    excused: t('boolean', { default: false }), // admin can excuse lateness (no deduction)
+    status: t('string', { enum: ['present', 'absent'], default: 'present' }),
+    isOffDay: t('boolean', { default: false }), // worked on a day not scheduled → overtime
+    overtimeApproved: t('boolean', { default: true }), // admin can apply/remove overtime
   },
   clients: {
     name: t('string', { required: true }),
     phoneNumbers: t('array', { default: [] }),
     addresses: t('array', { default: [] }),
+    governorate: t('string'),   // fixed, admin-managed location (for profit-by-area reports)
+    area: t('string'),          // place / district within the governorate
     notes: t('string'),
     loyaltyPoints: t('number', { default: 0 }),
     totalSpent: t('number', { default: 0 }),
     visitCount: t('number', { default: 0 }),
     preferences: t('array', { default: [] }),
+  },
+  locations: {
+    governorate: t('string', { required: true }),
+    area: t('string'), // a single place/district inside the governorate
   },
   goods: {
     name: t('string', { required: true }),
@@ -60,7 +72,9 @@ export const schemas = {
     notes: t('string'),
     paymentMethod: t('string', { enum: ['cash', 'card', 'wallet'], default: 'cash' }),
     status: t('string', { enum: ['pending', 'preparing', 'completed', 'cancelled'], default: 'pending' }),
-    branchId: t('string'),
+    governorate: t('string'),       // snapshot of the customer's location for reporting
+    area: t('string'),
+    deliveryAddress: t('string'),   // specific drop-off address for delivery orders
   },
   goodsChecks: {
     date: t('string', { required: true }),
@@ -90,9 +104,14 @@ export const schemas = {
     workerId: t('string', { required: true }),
     month: t('string', { required: true }),
     baseSalary: t('number', { default: 0 }),
+    overtimeHours: t('number', { default: 0 }),
     overtimePay: t('number', { default: 0 }),
+    lateMinutes: t('number', { default: 0 }),
+    lateDeduction: t('number', { default: 0 }),
+    bonus: t('number', { default: 0 }),
     deductions: t('number', { default: 0 }),
     netPay: t('number'),
+    notes: t('string'),
     paid: t('boolean', { default: false }),
   },
   reservations: {
@@ -111,19 +130,14 @@ export const schemas = {
     priority: t('string', { enum: ['low', 'normal', 'high'], default: 'normal' }),
   },
   shifts: {
+    // Weekly template: a worker is assigned a recurring shift on a day of the week
+    // (0 = Sunday … 6 = Saturday) rather than a one-off calendar date.
     workerId: t('string', { required: true }),
     workerName: t('string'),
     start: t('string', { required: true }),
     end: t('string', { required: true }),
     role: t('string'),
-    date: t('string', { required: true }),
-    branchId: t('string'),
-  },
-  branches: {
-    name: t('string', { required: true }),
-    address: t('string'),
-    phone: t('string'),
-    active: t('boolean', { default: true }),
+    dayOfWeek: t('number', { required: true, min: 0 }),
   },
 };
 

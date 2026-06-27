@@ -36,7 +36,7 @@ export default function Dashboard() {
   const { data: orders } = useFetch('/orders', []);
   if (loading || !data) return <Spinner />;
 
-  const { sales, finance, inventory, workers, customers } = data;
+  const { sales, finance, inventory, workers, customers, locations } = data;
   const recent = (orders || []).slice().sort((a, b) => b.orderDate - a.orderDate).slice(0, 6);
 
   const categoryMix = Object.values((sales.bestSelling || []).reduce((acc, p) => {
@@ -54,7 +54,7 @@ export default function Dashboard() {
       </div>
 
       {/* KPI row */}
-      <div className="grid grid--stats" style={{ marginBottom: 18 }}>
+      <div className="grid grid--4" style={{ marginBottom: 18 }}>
         <Stat label={t('dashboard.salesToday')} value={money(sales.daily)} icon={TrendingUp} color="linear-gradient(135deg,#7c3aed,#a855f7)" delta="live" />
         <Stat label={t('dashboard.salesMonth')} value={money(finance.revenue)} icon={DollarSign} color="linear-gradient(135deg,#10b981,#34d399)" />
         <Stat label={t('dashboard.netProfit')} value={money(finance.netProfit)} icon={Wallet} color="linear-gradient(135deg,#f59e0b,#fbbf24)" delta={`${finance.profitMargin}%`} />
@@ -128,6 +128,31 @@ export default function Dashboard() {
               <div style={{ fontWeight: 700 }}>{money(c.totalSpent)}</div>
             </div>
           ))}
+        </Card>
+      </div>
+
+      <div className="grid grid--2" style={{ marginBottom: 18 }}>
+        <Card title={t('dashboard.byLocation', 'Revenue by Location')} className="card--hover">
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={(locations || []).map((l) => ({ ...l, label: shortName(l.name, lang) }))} margin={{ left: -16, right: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 10.5, fill: 'var(--muted)' }} interval={0} height={40} />
+              <YAxis tick={{ fontSize: 11, fill: 'var(--muted)' }} />
+              <Tooltip content={<ChartTooltip />} />
+              <Bar dataKey="revenue" name="Revenue" radius={[8, 8, 0, 0]} fill="#06b6d4" />
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+        <Card title={t('dashboard.locationBreakdown', 'Location Breakdown')} className="card--hover">
+          <DataTable
+            columns={[
+              { key: 'name', label: t('dashboard.location', 'Location'), render: (v) => shortName(v, lang) },
+              { key: 'orders', label: t('dashboard.orders'), align: 'end', render: (v) => num(v) },
+              { key: 'revenue', label: t('dashboard.salesMonth'), align: 'end', render: (v) => money(v) },
+              { key: 'profit', label: t('dashboard.netProfit'), align: 'end', render: (v) => <span style={{ color: 'var(--success)', fontWeight: 700 }}>{money(v)}</span> },
+            ]}
+            rows={locations || []}
+          />
         </Card>
       </div>
 

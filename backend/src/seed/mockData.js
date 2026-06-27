@@ -13,12 +13,17 @@ const dayStr = (ts) => new Date(ts).toISOString().slice(0, 10);
 const monthStr = (ts) => new Date(ts).toISOString().slice(0, 7);
 
 export async function buildMockData() {
-  /* ── Branches ── */
-  const branches = [
-    { id: 'BR-main', name: 'Main Branch — الفرع الرئيسي', address: 'Tahrir St, Cairo', phone: '+20 2 1000 1000', active: true },
-    { id: 'BR-downtown', name: 'Downtown — وسط البلد', address: 'Downtown, Cairo', phone: '+20 2 1000 2000', active: true },
-    { id: 'BR-mall', name: 'Mall of Egypt — مول مصر', address: '6th October', phone: '+20 2 1000 3000', active: true },
+  /* ── Locations (admin-managed governorates + areas) ── */
+  const locationDefs = [
+    ['Cairo — القاهرة', ['Maadi — المعادي', 'Nasr City — مدينة نصر', 'Heliopolis — مصر الجديدة', 'Zamalek — الزمالك', 'Shoubra — شبرا']],
+    ['Giza — الجيزة', ['Dokki — الدقي', 'Mohandessin — المهندسين', '6th October — السادس من أكتوبر', 'Sheikh Zayed — الشيخ زايد']],
+    ['Alexandria — الإسكندرية', ['Smouha — سموحة', 'Miami — ميامي']],
   ];
+  const locations = [];
+  for (const [governorate, areas] of locationDefs) {
+    for (const area of areas) locations.push({ id: `LOC-${locations.length + 1}`, governorate, area });
+  }
+  const areaPool = locations.map((l) => ({ governorate: l.governorate, area: l.area }));
 
   /* ── Workers ── */
   const workerDefs = [
@@ -35,7 +40,7 @@ export async function buildMockData() {
       id: `WRK-${w.username}`,
       name: w.name, username: w.username, passwordHash: await hashPassword(w.password),
       role: w.role, phone: w.phone, salary: w.salary, hireDate: w.hireDate,
-      status: w.status || 'active', branchId: pick(branches).id,
+      status: w.status || 'active',
     });
   }
 
@@ -88,14 +93,18 @@ export async function buildMockData() {
     ['Dina Sami — دينا سامي', ['+20 110 111 2222'], ['Mohandessin']],
     ['Hassan Tamer — حسن تامر', ['+20 111 222 3333'], ['Shoubra, Cairo']],
   ];
-  const clients = clientDefs.map(([name, phoneNumbers, addresses], i) => ({
-    id: `CLI-${String(i + 1).padStart(3, '0')}`,
-    name, phoneNumbers, addresses,
-    notes: pick(['VIP customer', 'Prefers extra cheese', 'Allergic to nuts', 'Delivery only', '']),
-    loyaltyPoints: 0, totalSpent: 0, visitCount: 0,
-    preferences: pick([['No onion'], ['Spicy'], ['Extra sauce'], []]),
-    createdAt: now - randInt(30, 300) * DAY,
-  }));
+  const clients = clientDefs.map(([name, phoneNumbers, addresses], i) => {
+    const loc = pick(areaPool);
+    return {
+      id: `CLI-${String(i + 1).padStart(3, '0')}`,
+      name, phoneNumbers, addresses,
+      governorate: loc.governorate, area: loc.area,
+      notes: pick(['VIP customer', 'Prefers extra cheese', 'Allergic to nuts', 'Delivery only', '']),
+      loyaltyPoints: 0, totalSpent: 0, visitCount: 0,
+      preferences: pick([['No onion'], ['Spicy'], ['Extra sauce'], []]),
+      createdAt: now - randInt(30, 300) * DAY,
+    };
+  });
 
   /* ── Orders across the last 30 days (drives finance + analytics) ── */
   const orders = [];
@@ -119,10 +128,11 @@ export async function buildMockData() {
         id: `ORD-${dayStr(ts).replace(/-/g, '')}-${k}`,
         invoiceNo: `INV-${String(orders.length + 1).padStart(5, '0')}`,
         clientId: client?.id || null, clientName: client?.name || 'Walk-in',
+        governorate: client?.governorate || '', area: client?.area || '',
         cashierId: cashier.id, orderDate: ts,
         products: lines, totalPrice: total,
         notes: '', paymentMethod: pick(['cash', 'card', 'wallet']),
-        status, branchId: cashier.branchId,
+        status,
       };
       orders.push(order);
 
@@ -155,9 +165,11 @@ export async function buildMockData() {
       const hours = +rand(7, 10).toFixed(2);
       const checkOut = checkIn + hours * 3.6e6;
       attendance.push({
-        id: `ATT-${w.id}-${date}`, workerId: w.id, date,
+        id: `ATT-${w.id}-${date}`, workerId: w.id, workerName: w.name, date,
         checkInTime: checkIn, checkOutTime: checkOut,
         totalHours: hours, overtimeHours: Math.max(0, +(hours - 8).toFixed(2)),
+        shift: 'day', lateMinutes: Math.random() < 0.2 ? randInt(5, 25) : 0,
+        excused: false, status: 'present', isOffDay: false, overtimeApproved: true,
       });
     }
   }
@@ -213,14 +225,13 @@ export async function buildMockData() {
     });
   }
 
-  /* ── Shifts (this week) ── */
+  /* ── Shifts (weekly template: Sun–Thu working week) ── */
   const shifts = [];
   for (const w of workers.filter((x) => x.status === 'active')) {
-    for (let d = 0; d < 5; d++) {
+    for (let dow = 0; dow <= 4; dow++) { // 0=Sun … 4=Thu
       shifts.push({
-        id: `SHF-${w.id}-${d}`, workerId: w.id, workerName: w.name,
-        date: dayStr(now + d * DAY), start: '09:00', end: '17:00',
-        role: w.role, branchId: w.branchId,
+        id: `SHF-${w.id}-${dow}`, workerId: w.id, workerName: w.name,
+        dayOfWeek: dow, start: '09:00', end: '17:00', role: w.role,
       });
     }
   }
@@ -240,7 +251,7 @@ export async function buildMockData() {
   }];
 
   return {
-    branches, workers, goods, products, clients, orders, loyaltyTx, kdsTickets,
+    locations, workers, goods, products, clients, orders, loyaltyTx, kdsTickets,
     attendance, purchases, expenses, salaries, goodsChecks, reservations, shifts,
     auditLogs, settings,
   };

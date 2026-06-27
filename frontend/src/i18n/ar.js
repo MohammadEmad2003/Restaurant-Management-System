@@ -67,6 +67,7 @@ export default {
     payroll: 'كشف الرواتب', payAll: 'صرف الكل', base: 'الأساسي', overtime: 'الإضافي', lateDed: 'خصم التأخير −',
     bonus: 'مكافأة', deduction: 'خصم', net: 'الصافي', paid: 'مدفوع',
     payrollHint: 'راجع كل راتب قبل الصرف. أضف مكافأة أو خصماً إضافياً عند الحاجة؛ تُطبَّق خصومات التأخير والإضافي تلقائياً.',
+    paidLocked: 'تم الصرف — لا يمكن التعديل',
   },
   products: {
     count: 'منتجات', avgMargin: 'متوسط الهامش', category: 'الفئة', cost: 'التكلفة', profit: 'الربح',

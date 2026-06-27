@@ -160,8 +160,8 @@ export default function Workers() {
                       <td className="num">{money(r.baseSalary)}</td>
                       <td className="num">{r.overtimeHours}h · {money(r.overtimePay)}</td>
                       <td className="num" style={{ color: r.lateDeduction ? 'var(--danger)' : 'inherit' }}>{r.lateMinutes}m · {money(r.lateDeduction)}</td>
-                      <td className="num"><input className="input ltr" type="number" style={{ width: 80, padding: '6px 8px', textAlign: 'end' }} value={edits[r.workerId]?.bonus ?? r.bonus ?? ''} onChange={(e) => editRow(r.workerId, { bonus: e.target.value })} disabled={r.paid} /></td>
-                      <td className="num"><input className="input ltr" type="number" style={{ width: 80, padding: '6px 8px', textAlign: 'end' }} value={edits[r.workerId]?.deductions ?? r.deductions ?? ''} onChange={(e) => editRow(r.workerId, { deductions: e.target.value })} disabled={r.paid} /></td>
+                      <td className="num"><input className="input ltr" type="number" min="0" placeholder="0" style={{ width: 80, padding: '6px 8px', textAlign: 'end' }} value={edits[r.workerId]?.bonus ?? (r.bonus || '')} onChange={(e) => editRow(r.workerId, { bonus: e.target.value })} disabled={r.paid} title={r.paid ? t('workers.paidLocked', 'Already paid — cannot edit') : ''} /></td>
+                      <td className="num"><input className="input ltr" type="number" min="0" placeholder="0" style={{ width: 80, padding: '6px 8px', textAlign: 'end' }} value={edits[r.workerId]?.deductions ?? (r.deductions || '')} onChange={(e) => editRow(r.workerId, { deductions: e.target.value })} disabled={r.paid} title={r.paid ? t('workers.paidLocked', 'Already paid — cannot edit') : ''} /></td>
                       <td className="num" style={{ fontWeight: 800 }}>{money(rowNet(r))}</td>
                     </tr>
                   ))}

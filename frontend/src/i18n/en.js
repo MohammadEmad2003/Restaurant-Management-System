@@ -67,6 +67,7 @@ export default {
     payroll: 'Payroll', payAll: 'Pay All', base: 'Base', overtime: 'Overtime', lateDed: 'Late −',
     bonus: 'Bonus', deduction: 'Deduction', net: 'Net Pay', paid: 'paid',
     payrollHint: 'Review each salary before paying. Add a bonus or extra deduction as needed; late deductions and overtime are applied automatically.',
+    paidLocked: 'Already paid — cannot edit',
   },
   products: {
     count: 'products', avgMargin: 'avg margin', category: 'Category', cost: 'Cost', profit: 'Profit',

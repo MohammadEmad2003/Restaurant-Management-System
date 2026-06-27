@@ -25,6 +25,7 @@ import { loyaltyService } from '../services/loyaltyService.js';
 import { shiftService } from '../services/shiftService.js';
 import { locationService } from '../services/locationService.js';
 import { salaryService } from '../services/salaryService.js';
+import { settingsService } from '../services/settingsService.js';
 import { createCrudService } from '../services/baseService.js';
 import { syncEngine } from '../sync/syncEngine.js';
 import { repo } from '../repositories/index.js';
@@ -209,7 +210,7 @@ router.get('/audit-logs', auth, rbac('admin'), h(async (req, res) => {
 }));
 
 /* ──────────────────────── SETTINGS ─────────────────────── */
-router.get('/settings', auth, h(async (req, res) => res.json((await repo('settings').getAll())[0] || {})));
+router.get('/settings', auth, h(async (req, res) => res.json(await settingsService.get())));
 router.put('/settings', auth, rbac('admin'), h(async (req, res) => {
   const current = (await repo('settings').getAll())[0];
   const saved = current ? await repo('settings').update(current.id, req.body) : await repo('settings').create(req.body);

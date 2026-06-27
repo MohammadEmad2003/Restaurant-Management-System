@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { X, Inbox } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-export function Card({ title, sub, actions, children, className = '', hover = false }) {
+export function Card({ title, sub, actions, children, className = '', hover = false, style }) {
   return (
-    <div className={`card ${hover ? 'card--hover' : ''} ${className}`}>
+    <div className={`card ${hover ? 'card--hover' : ''} ${className}`} style={style}>
       {(title || actions) && (
         <div className="card__head">
           <div>

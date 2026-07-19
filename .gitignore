@@ -13,7 +13,8 @@ backend/src/data/
 .env.local
 .env.*.local
 
-# Debug/test PDF output
+# Debug/test scratch scripts & PDF output
+backend/test-*.js
 backend/test-*.pdf
 backend/_*.pdf
 

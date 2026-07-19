@@ -1,5 +1,6 @@
 import { localStore } from '../repositories/localStore.js';
 import { newId } from '../utils/ids.js';
+import { config, isFirebaseConfigured } from '../config/index.js';
 
 /**
  * Append-only queue of pending changes to push to Firestore when online.
@@ -7,8 +8,19 @@ import { newId } from '../utils/ids.js';
  */
 const COLLECTION = '_outbox';
 
+/**
+ * Only queue writes when a Firestore target can actually drain them. Without
+ * this guard the outbox grows without bound in the default (no-Firebase) setup —
+ * nothing ever flushes it, yet every write re-serialises the whole file, which
+ * is the dominant source of write latency as the dataset grows.
+ */
+function syncTargetAvailable() {
+  return config.persistenceMode !== 'local' && isFirebaseConfigured();
+}
+
 export const outbox = {
   enqueue(op, collection, id, payload, version) {
+    if (!syncTargetAvailable()) return;
     const rows = localStore.load(COLLECTION);
     rows.push({
       id: newId('obx'),

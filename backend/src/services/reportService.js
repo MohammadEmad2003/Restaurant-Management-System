@@ -1,8 +1,12 @@
 import { repo } from '../repositories/index.js';
-import { renderReportPdf, renderMultiReportPdf } from '../utils/pdf.js';
-import { renderReportPdfHtml, isPuppeteerMissing } from '../utils/htmlReport.js';
-import { renderReportXlsx, renderMultiReportXlsx } from '../utils/excel.js';
 import { logger } from '../utils/logger.js';
+
+// The PDF (pdfkit + fontkit) and Excel (exceljs) renderers cost ~800ms to load.
+// They are pulled in lazily on the first report request so they never sit on the
+// server's boot path — reports are an occasional, admin-only operation.
+const loadPdf = () => import('../utils/pdf.js');
+const loadHtmlReport = () => import('../utils/htmlReport.js');
+const loadExcel = () => import('../utils/excel.js');
 import { financeService } from './financeService.js';
 import { goodsService } from './goodsService.js';
 import { goodsCheckService } from './goodsCheckService.js';
@@ -348,18 +352,21 @@ export const reportService = {
     const meta = await settingsMeta();
     // SOTA: render via headless Chromium (proper Arabic shaping, bidi, RTL tables, font
     // fallback). Falls back to the pdfkit renderer if puppeteer isn't installed yet.
+    const { renderReportPdfHtml, isPuppeteerMissing } = await loadHtmlReport();
     try {
       return await renderReportPdfHtml({ title, meta, sections, lang: params.lang, filename: params.filename });
     } catch (err) {
       logger.warn(isPuppeteerMissing(err)
         ? 'puppeteer not installed — using pdfkit for the report PDF. Run `npm install puppeteer` (in backend/) for the best Arabic/RTL output.'
         : `Chromium PDF render failed (${err.message}) — using pdfkit fallback. Ensure Chromium/system libs are installed.`);
+      const { renderMultiReportPdf } = await loadPdf();
       return renderMultiReportPdf({ title, titleAr, meta, sections, lang: params.lang, filename: params.filename });
     }
   },
 
   async bundleXlsx(name, params = {}) {
     const { title, titleAr, sections } = await this.buildBundle(name, params);
+    const { renderMultiReportXlsx } = await loadExcel();
     return renderMultiReportXlsx({ title, titleAr, sections, lang: params.lang, filename: params.filename });
   },
 
@@ -370,6 +377,7 @@ export const reportService = {
     const subtitle = params.from ? `${isAr ? 'الفترة' : 'Range'}: ${params.from} → ${params.to || (isAr ? 'الآن' : 'now')}` : '';
     const title = isAr ? (spec.titleAr || spec.title) : spec.title;
     // SOTA HTML→PDF (Chromium) with a graceful fallback to pdfkit if puppeteer is absent.
+    const { renderReportPdfHtml, isPuppeteerMissing } = await loadHtmlReport();
     try {
       const sections = [{ title: '', columns: spec.columns, rows: spec.rows, totals: spec.totals, chart: spec.chart }];
       return await renderReportPdfHtml({ title, subtitle, meta, sections, lang: params.lang, filename: params.filename });
@@ -377,12 +385,14 @@ export const reportService = {
       logger.warn(isPuppeteerMissing(err)
         ? 'puppeteer not installed — using pdfkit for the report PDF. Run `npm install puppeteer` (in backend/) for the best Arabic/RTL output.'
         : `Chromium PDF render failed (${err.message}) — using pdfkit fallback. Ensure Chromium/system libs are installed.`);
+      const { renderReportPdf } = await loadPdf();
       return renderReportPdf({ ...spec, meta, subtitle, lang: params.lang, filename: params.filename });
     }
   },
 
   async xlsx(type, params = {}) {
     const spec = await this.build(type, params);
+    const { renderReportXlsx } = await loadExcel();
     return renderReportXlsx({ ...spec, sheetName: type, lang: params.lang, filename: params.filename });
   },
 };

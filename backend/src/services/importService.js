@@ -1,4 +1,3 @@
-import { parseXlsx } from '../utils/excel.js';
 import { validate } from '../models/index.js';
 import { repo } from '../repositories/index.js';
 import { hashPassword } from '../utils/hash.js';
@@ -32,6 +31,7 @@ function shape(entity, row) {
 export const importService = {
   async validateFile(entity, buffer) {
     if (!COLLECTIONS[entity]) throw new HttpError(400, `Cannot import "${entity}"`);
+    const { parseXlsx } = await import('../utils/excel.js'); // exceljs is heavy — load only on import
     const rows = await parseXlsx(buffer);
     const results = rows.map((row, i) => {
       const shaped = shape(entity, row);

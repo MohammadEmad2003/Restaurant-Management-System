@@ -5,7 +5,8 @@ A complete, **offline-first** restaurant management platform.
 
 > **Runs immediately with mock data — no Firebase needed.** The backend boots on a local JSON store seeded with realistic data. Add your Firebase keys to `backend/.env` whenever you're ready and the sync engine pushes everything to the cloud automatically.
 
-📐 The complete architecture & specification lives in **[docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)** (all 15 deliverables, ERD, sequence diagrams, API, roadmap).
+📐 The complete architecture & specification lives in **[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)**.
+🚀 A performance investigation & refactor (startup time, write latency, bundle size) is written up in **[REFACTOR_PLAN.md](REFACTOR_PLAN.md)**.
 
 ---
 
@@ -24,13 +25,19 @@ A complete, **offline-first** restaurant management platform.
 
 ## 🚀 Quick start
 
-**Prerequisites:** Node.js 18+ (you have v24).
+**Prerequisites:** Node.js 18+.
+
+> `node_modules` is platform-specific (native binaries for esbuild/rollup/sharp
+> etc. differ per OS). If you ever copy this project between machines/OSes (e.g.
+> Linux → Windows), delete `node_modules` in both `backend/` and `frontend/` and
+> run `npm install` fresh on the target machine — a mismatched install is the
+> most common cause of a dev server that won't start.
 
 ### 1) Backend (terminal 1)
 ```bash
 cd backend
-npm install
-npm start          # → http://localhost:4000  (auto-seeds mock data on first run)
+npm install         # puppeteer's Chromium download is skipped (see backend/.npmrc) — fast install
+npm start           # → http://localhost:4000  (auto-seeds mock data on first run)
 ```
 
 ### 2) Frontend (terminal 2)
@@ -83,7 +90,8 @@ cd backend && npm run seed
 
 ```
 Restaurant/
-├── docs/IMPLEMENTATION_PLAN.md   # full architecture & spec (read this!)
+├── IMPLEMENTATION_PLAN.md        # full architecture & spec (read this!)
+├── REFACTOR_PLAN.md              # performance investigation & fixes (read this too)
 ├── backend/                      # Node.js + Express API
 │   ├── src/
 │   │   ├── config/  models/  repositories/  (local JSON + Firestore)
@@ -94,7 +102,7 @@ Restaurant/
 └── frontend/                     # React + Vite + Electron
     ├── electron/                 # desktop shell
     └── src/
-        ├── pages/                # one per module (18 pages)
+        ├── pages/                # one per module, lazy-loaded per route
         ├── components/  layout/  store/  i18n/ (ar+en)  styles/ (design system)
 ```
 
@@ -107,6 +115,43 @@ Restaurant/
 - **JWT auth + server-side RBAC** (admin / cashier) mirrored in the UI permission matrix.
 - **Modern rounded design system** — soft shadows, generous radii, light/dark themes, violet brand, full RTL.
 - **Reporting** — `pdfkit` + `exceljs`, every major report exportable as PDF & Excel.
+
+---
+
+## ⚡ Performance
+
+The backend is offline-first: reads/writes hit a local JSON store first, and (when
+Firebase is configured) an outbox queue mirrors changes to Firestore in the
+background. A few things matter for keeping it fast as data grows:
+
+- **Backend boot is lazy on heavy modules.** `pdfkit` and `exceljs` (report/invoice
+  rendering, ~800 ms combined to load) are imported on first use, not at startup.
+  `puppeteer` (optional, best-quality PDF rendering) is an `optionalDependency` and
+  its Chromium download is skipped by default (`backend/.npmrc`); reports fall back
+  to the built-in `pdfkit` renderer automatically if it isn't installed.
+- **Local-store writes are async, coalesced and compact.** A burst of writes in the
+  same tick (e.g. an order + its audit log) becomes one non-blocking file write per
+  collection instead of several synchronous, pretty-printed ones. A flush also runs
+  on process exit so nothing pending is lost. Tune the coalescing window with
+  `STORE_FLUSH_MS` (default `30`ms).
+- **The sync outbox only grows when something will actually drain it.** If Firebase
+  isn't configured (the default), writes are never queued for a sync that can't
+  happen — this was previously the single biggest source of write latency, since
+  the queue grew forever and every write re-serialised it in full.
+- **The audit log is capped locally** to the most recent `AUDIT_LOG_CAP` entries
+  (default `2000`) so `/api/audit-logs` and every write stay bounded.
+- **The frontend is code-split per route** (`React.lazy` + `Suspense`), with
+  `recharts`, `react`/`react-router`, and `i18next` split into their own vendor
+  chunks — the initial bundle no longer ships all 25 pages and the charting
+  library up front.
+
+See **[REFACTOR_PLAN.md](REFACTOR_PLAN.md)** for the full investigation, before/after
+numbers, and follow-ups.
+
+> **Moving this project between machines/OSes?** `node_modules` bakes in
+> platform-specific native binaries. Reinstall (`rm -rf node_modules && npm install`)
+> on the machine you're actually running on rather than copying the folder over —
+> a Linux-built `node_modules` will not run Vite/esbuild on Windows (or vice versa).
 
 ---
 

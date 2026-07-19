@@ -32,7 +32,6 @@ import { settingsService } from '../services/settingsService.js';
 import { createCrudService } from '../services/baseService.js';
 import { syncEngine } from '../sync/syncEngine.js';
 import { repo } from '../repositories/index.js';
-import { renderInvoicePdf, renderInvoicePdfAr } from '../utils/pdf.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -130,6 +129,7 @@ router.patch('/orders/:id/status', auth, h(async (req, res) => res.json(await or
 router.get('/orders/:id/invoice.pdf', auth, h(async (req, res) => {
   const order = await orderService.get(req.params.id);
   const settings = (await repo('settings').getAll())[0] || {};
+  const { renderInvoicePdf, renderInvoicePdfAr } = await import('../utils/pdf.js');
   const pdf = req.query.lang === 'ar' ? await renderInvoicePdfAr(order, settings) : await renderInvoicePdf(order, settings);
   res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': contentDisposition(`${order.invoiceNo || order.id}.pdf`) });
   res.send(pdf);

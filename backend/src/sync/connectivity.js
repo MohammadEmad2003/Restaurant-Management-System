@@ -1,15 +1,15 @@
-import { config, isFirebaseConfigured } from '../config/index.js';
-import { getFirestore } from '../config/firebase.js';
+import { config, isSupabaseConfigured } from '../config/index.js';
+import { getDb } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { withTimeout } from '../utils/withTimeout.js';
 
 /**
- * Tracks whether we can reach Firestore. Drives the failover between the
- * Firestore repository (online) and the local JSON repository (offline).
+ * Tracks whether we can reach Supabase. Drives the failover between the
+ * Supabase repository (online) and the local JSON repository (offline).
  *
- * Reachability is probed with a hard timeout so a dropped wifi connection is
- * detected in seconds (not on the ~60s gRPC deadline). While offline we re-probe
- * on a short interval so the system reconnects automatically when wifi returns.
+ * Reachability is probed with a hard timeout so a dropped connection is
+ * detected in seconds instead of hanging. While offline we re-probe on a
+ * short interval so the system reconnects automatically when it returns.
  */
 class Connectivity {
   constructor() {
@@ -29,15 +29,15 @@ class Connectivity {
   }
 
   async check() {
-    if (config.persistenceMode === 'local' || !isFirebaseConfigured()) {
+    if (config.persistenceMode === 'local' || !isSupabaseConfigured()) {
       return this._set(false);
     }
     try {
-      const db = await getFirestore();
+      const db = await getDb();
       if (!db) return this._set(false);
-      // Lightweight reachability probe, bounded so no-wifi fails fast.
+      // Lightweight reachability probe, bounded so a dropped connection fails fast.
       await withTimeout(
-        db.collection('_health').limit(1).get(),
+        db.query('select 1'),
         config.sync.probeTimeoutMs,
         'connectivity probe',
       );
@@ -48,7 +48,7 @@ class Connectivity {
   }
 
   /**
-   * Force offline immediately (e.g. a live request to Firestore just timed out).
+   * Force offline immediately (e.g. a live request to Supabase just timed out).
    * Avoids every subsequent request paying the timeout before failing over.
    */
   goOffline(reason) {
@@ -72,7 +72,7 @@ class Connectivity {
 
   _scheduleRetry() {
     if (this._retryTimer || !config.sync.enabled) return;
-    if (config.persistenceMode === 'local' || !isFirebaseConfigured()) return;
+    if (config.persistenceMode === 'local' || !isSupabaseConfigured()) return;
     this._retryTimer = setTimeout(() => {
       this._retryTimer = null;
       this.check();

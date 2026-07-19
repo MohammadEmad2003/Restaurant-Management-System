@@ -8,7 +8,6 @@ import { logger } from './utils/logger.js';
 import routes from './routes/index.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { syncEngine } from './sync/syncEngine.js';
-import { ensureSeeded } from './seed/seed.js';
 
 const app = express();
 
@@ -30,16 +29,15 @@ app.use(notFound);
 app.use(errorHandler);
 
 async function start() {
-  // Seed mock data on first run so the system shows results immediately.
-  await ensureSeeded();
+  // Mock-data seeding is opt-in only now (`npm run seed`) — real data comes
+  // from Supabase/the local store, not an auto-generated demo dataset.
 
-  // Boot the offline-first sync engine (no-op until Firebase configured).
+  // Boot the offline-first sync engine (no-op until Supabase configured).
   syncEngine.start();
 
   const server = app.listen(config.port, () => {
     logger.success(`Backend listening on http://localhost:${config.port}  (mode: ${config.persistenceMode})`);
     logger.info('API base: http://localhost:' + config.port + '/api');
-    logger.info('Login as admin/admin123 or cashier/cashier123 (seeded).');
   });
 
   // Clear, non-crashing message when the port is already taken (another server still running).

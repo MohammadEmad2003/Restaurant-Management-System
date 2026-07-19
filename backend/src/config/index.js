@@ -13,13 +13,13 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET || 'dev-secret-change-me',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '12h',
 
-  persistenceMode: process.env.PERSISTENCE_MODE || 'auto', // auto | local | firebase
+  persistenceMode: process.env.PERSISTENCE_MODE || 'auto', // auto | local | supabase
   sync: {
     enabled: process.env.SYNC_ENABLED !== 'false',
     intervalMs: Number(process.env.SYNC_INTERVAL_MS) || 15000,
     conflictPolicy: process.env.CONFLICT_POLICY || 'last-write-wins',
-    // Network calls to Firestore are bounded by these so a lost wifi connection
-    // fails over to the local store quickly instead of hanging on gRPC.
+    // Network calls to Supabase are bounded by these so a dropped connection
+    // fails over to the local store quickly instead of hanging.
     probeTimeoutMs: Number(process.env.SYNC_PROBE_TIMEOUT_MS) || 3000,
     readTimeoutMs: Number(process.env.SYNC_READ_TIMEOUT_MS) || 4000,
     // After dropping offline, re-probe this often until back online.
@@ -29,14 +29,15 @@ export const config = {
   // Absolute path to the local JSON store directory.
   dataDir: path.resolve(__dirname, '..', 'data'),
 
-  firebase: {
-    apiKey: process.env.FIREBASE_API_KEY || '',
-    authDomain: process.env.FIREBASE_AUTH_DOMAIN || '',
-    projectId: process.env.FIREBASE_PROJECT_ID || '',
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || '',
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL || '',
-    // Support both escaped (\n) and real newlines from .env
-    privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+  supabase: {
+    // Direct Postgres connection string, e.g.
+    // postgresql://postgres:postgres@127.0.0.1:54322/postgres (self-hosted `supabase start`).
+    dbUrl: process.env.DATABASE_URL || '',
+    // Kept for future use (Storage/Edge Functions/Auth) — not required for the
+    // direct-Postgres repository path.
+    url: process.env.SUPABASE_URL || '',
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+    anonKey: process.env.SUPABASE_ANON_KEY || '',
   },
 };
 
@@ -56,10 +57,9 @@ const featureOn = (key) => {
 };
 config.features = Object.fromEntries(FEATURE_KEYS.map((k) => [k, featureOn(k)]));
 
-/** True only when enough Firebase Admin credentials are present to connect. */
-export function isFirebaseConfigured() {
-  const f = config.firebase;
-  return Boolean(f.projectId && f.clientEmail && f.privateKey);
+/** True only when a Postgres connection string is present. */
+export function isSupabaseConfigured() {
+  return Boolean(config.supabase.dbUrl);
 }
 
 export default config;

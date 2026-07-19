@@ -1,21 +1,21 @@
 import { localStore } from '../repositories/localStore.js';
 import { newId } from '../utils/ids.js';
-import { config, isFirebaseConfigured } from '../config/index.js';
+import { config, isSupabaseConfigured } from '../config/index.js';
 
 /**
- * Append-only queue of pending changes to push to Firestore when online.
+ * Append-only queue of pending changes to push to Supabase when online.
  * Stored as its own "collection" so it survives restarts.
  */
 const COLLECTION = '_outbox';
 
 /**
- * Only queue writes when a Firestore target can actually drain them. Without
- * this guard the outbox grows without bound in the default (no-Firebase) setup —
+ * Only queue writes when a Supabase target can actually drain them. Without
+ * this guard the outbox grows without bound in the default (no-Supabase) setup —
  * nothing ever flushes it, yet every write re-serialises the whole file, which
  * is the dominant source of write latency as the dataset grows.
  */
 function syncTargetAvailable() {
-  return config.persistenceMode !== 'local' && isFirebaseConfigured();
+  return config.persistenceMode !== 'local' && isSupabaseConfigured();
 }
 
 export const outbox = {

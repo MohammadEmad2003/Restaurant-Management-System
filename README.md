@@ -1,9 +1,9 @@
 # 🍽️ Bella Cucina — Restaurant Management System
 
 A complete, **offline-first** restaurant management platform.
-**React + Vite (+ Electron desktop)** · **Node.js + Express** · **Firebase Firestore** · **Arabic + English (RTL/LTR)** · **PDF & Excel reporting**.
+**React + Vite (+ Electron desktop)** · **Node.js + Express** · **Supabase (self-hosted Postgres)** · **Arabic + English (RTL/LTR)** · **PDF & Excel reporting**.
 
-> **Runs immediately with mock data — no Firebase needed.** The backend boots on a local JSON store seeded with realistic data. Add your Firebase keys to `backend/.env` whenever you're ready and the sync engine pushes everything to the cloud automatically.
+> **Runs immediately with mock data — no Supabase needed.** The backend boots on a local JSON store seeded with realistic data. Add your Supabase `DATABASE_URL` to `backend/.env` whenever you're ready and the sync engine pushes everything to Postgres automatically.
 
 📐 The complete architecture & specification lives in **[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)**.
 🚀 A performance investigation & refactor (startup time, write latency, bundle size) is written up in **[REFACTOR_PLAN.md](REFACTOR_PLAN.md)**.
@@ -68,21 +68,26 @@ cd backend && npm run seed
 
 ---
 
-## 🔌 Connecting Firebase (optional)
+## 🔌 Connecting Supabase (optional)
 
-1. Create a project at <https://console.firebase.google.com>.
-2. **Project settings → General** → copy the web config values.
-3. **Project settings → Service accounts → Generate new private key**.
-4. Paste them all into **`backend/.env`** (copy from `.env.example`):
-   ```env
-   FIREBASE_PROJECT_ID=your-project-id
-   FIREBASE_CLIENT_EMAIL=...@your-project.iam.gserviceaccount.com
-   FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
-   FIREBASE_STORAGE_BUCKET=your-project.appspot.com
-   # ...and the rest
-   PERSISTENCE_MODE=auto
-   ```
-5. Restart the backend. The **Sync Status** page shows it go **Online** and flush pending changes to Firestore. Until then, everything keeps working offline — **no data is ever lost.**
+Works with either a **self-hosted** instance (via the Supabase CLI) or a hosted
+project — both just need a Postgres connection string.
+
+**Self-hosted (local dev):**
+1. Install the [Supabase CLI](https://supabase.com/docs/guides/cli) and run `supabase start` in your Supabase project directory.
+2. Copy the `DB URL` it prints (e.g. `postgresql://postgres:postgres@127.0.0.1:54322/postgres`).
+
+**Hosted (supabase.com):**
+1. Create a project at <https://supabase.com/dashboard>.
+2. **Project settings → Database** → copy the connection string (use the pooled "Transaction" URL for production).
+
+Then paste it into **`backend/.env`** (copy from `.env.example`):
+```env
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
+PERSISTENCE_MODE=auto
+```
+
+Restart the backend. The **Sync Status** page shows it go **Online** and flush pending changes to Postgres. Until then, everything keeps working offline — **no data is ever lost.** The `records` table (one JSONB row per document, matching the existing collection/document model) is created automatically on first connect — no manual migration needed.
 
 ---
 
@@ -94,7 +99,7 @@ Restaurant/
 ├── REFACTOR_PLAN.md              # performance investigation & fixes (read this too)
 ├── backend/                      # Node.js + Express API
 │   ├── src/
-│   │   ├── config/  models/  repositories/  (local JSON + Firestore)
+│   │   ├── config/  models/  repositories/  (local JSON + Supabase)
 │   │   ├── services/  controllers via routes/  middleware/  (auth, rbac, audit)
 │   │   ├── sync/     (connectivity, outbox, conflict resolution)
 │   │   ├── utils/    (pdf, excel, hash)   seed/  (mock data)
@@ -110,7 +115,7 @@ Restaurant/
 
 ## 🧱 Tech & design
 
-- **Offline-first repository pattern** — services depend on an interface; a factory swaps Firestore ↔ local JSON by connectivity.
+- **Offline-first repository pattern** — services depend on an interface; a factory swaps Supabase ↔ local JSON by connectivity.
 - **Sync engine** — outbox queue, connectivity monitor, last-write-wins + field-merge + tombstones.
 - **JWT auth + server-side RBAC** (admin / cashier) mirrored in the UI permission matrix.
 - **Modern rounded design system** — soft shadows, generous radii, light/dark themes, violet brand, full RTL.
@@ -121,7 +126,7 @@ Restaurant/
 ## ⚡ Performance
 
 The backend is offline-first: reads/writes hit a local JSON store first, and (when
-Firebase is configured) an outbox queue mirrors changes to Firestore in the
+Supabase is configured) an outbox queue mirrors changes to Postgres in the
 background. A few things matter for keeping it fast as data grows:
 
 - **Backend boot is lazy on heavy modules.** `pdfkit` and `exceljs` (report/invoice
@@ -134,7 +139,7 @@ background. A few things matter for keeping it fast as data grows:
   collection instead of several synchronous, pretty-printed ones. A flush also runs
   on process exit so nothing pending is lost. Tune the coalescing window with
   `STORE_FLUSH_MS` (default `30`ms).
-- **The sync outbox only grows when something will actually drain it.** If Firebase
+- **The sync outbox only grows when something will actually drain it.** If Supabase
   isn't configured (the default), writes are never queued for a sync that can't
   happen — this was previously the single biggest source of write latency, since
   the queue grew forever and every write re-serialised it in full.

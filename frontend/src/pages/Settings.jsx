@@ -91,11 +91,12 @@ export default function Settings() {
 
       <LocationsCard />
 
-      <Card title={t('settings.firebase', 'Firebase Connection')} style={{ marginTop: 18 }}>
+      <Card title={t('settings.supabase', 'Supabase Connection')} style={{ marginTop: 18 }}>
         <p className="muted" style={{ fontSize: 13.5, lineHeight: 1.7 }}>
-          The system runs <b>offline-first</b> on a local JSON store with mock data. To enable cloud sync, paste your Firebase
-          credentials into <code>backend/.env</code> (get them from the Firebase Console → Project Settings). The sync engine
-          detects the connection automatically and pushes all pending changes — no restart of your workflow required.
+          The system runs <b>offline-first</b> on a local JSON store with mock data. To enable cloud sync, paste your Supabase
+          Postgres connection string into <code>backend/.env</code> as <code>DATABASE_URL</code> (from a self-hosted instance's
+          <code>supabase start</code> output, or a hosted project's connection settings). The sync engine detects the connection
+          automatically and pushes all pending changes — no restart of your workflow required.
         </p>
       </Card>
     </div>

@@ -1,13 +1,14 @@
 import { LocalJsonRepository } from './LocalJsonRepository.js';
-import { FirestoreRepository } from './FirestoreRepository.js';
-import { getFirestore } from '../config/firebase.js';
+import { SupabaseRepository } from './SupabaseRepository.js';
+import { getDb } from '../config/database.js';
+import { getRecordRow, upsertRecord } from './supabaseRecords.js';
 import { connectivity } from '../sync/connectivity.js';
 import { config } from '../config/index.js';
 import { withTimeout } from '../utils/withTimeout.js';
 import { outbox } from '../sync/outbox.js';
 
 /**
- * Repository factory. Returns a thin proxy that delegates to the Firestore
+ * Repository factory. Returns a thin proxy that delegates to the Supabase
  * repository when online, and to the local JSON repository when offline.
  * Services call repo(...) once and never worry about connectivity again.
  *
@@ -60,18 +61,18 @@ function local(collection) {
 }
 
 async function remote(collection) {
-  const db = await getFirestore();
+  const db = await getDb();
   if (!db) return null;
   if (!remoteCache.has(collection)) {
-    remoteCache.set(collection, new FirestoreRepository(collection, db, { idPrefix: PREFIX[collection] }));
+    remoteCache.set(collection, new SupabaseRepository(collection, db, { idPrefix: PREFIX[collection] }));
   }
   return remoteCache.get(collection);
 }
 
 /**
  * Returns a repository for a collection. When PERSISTENCE_MODE is "local" (or
- * Firebase is unreachable) every call uses the local store. Otherwise reads
- * prefer Firestore but always have the local store as a safety net.
+ * Supabase is unreachable) every call uses the local store. Otherwise reads
+ * prefer Supabase but always have the local store as a safety net.
  */
 export function repo(collection) {
   const localRepo = local(collection);
@@ -95,9 +96,9 @@ export function repo(collection) {
     };
   }
 
-  // Auto/firebase mode → proxy that chooses per-call based on connectivity,
+  // Auto/supabase mode → proxy that chooses per-call based on connectivity,
   // and writes always go through local (offline-first + outbox) so the sync
-  // engine is the single path that reaches Firestore.
+  // engine is the single path that reaches Supabase.
   return {
     collection,
     async getAll(filter) {
@@ -160,28 +161,34 @@ export function repo(collection) {
 }
 
 /**
- * Push a single just-written record straight to Firestore when online so reads
+ * Push a single just-written record straight to Supabase when online so reads
  * are immediately consistent. On any failure we drop offline and leave the
  * outbox entry for the sync engine to retry later.
  */
 async function mirror(collection, op, id, rec) {
   if (config.persistenceMode === 'local' || !connectivity.isOnline) return;
   try {
-    const db = await getFirestore();
+    const db = await getDb();
     if (!db) return;
-    const ref = db.collection(collection).doc(id);
     if (op === 'delete') {
+      const prev = await withTimeout(
+        getRecordRow(db, collection, id), config.sync.readTimeoutMs, `${collection}.mirror-delete-get`,
+      );
+      const tomb = {
+        ...(prev || { id }),
+        _sync: { ...(prev?._sync || {}), deleted: true, status: 'synced', updatedAt: Date.now() },
+      };
       await withTimeout(
-        ref.set({ _sync: { deleted: true, status: 'synced', updatedAt: Date.now() } }, { merge: true }),
+        upsertRecord(db, collection, id, tomb),
         config.sync.readTimeoutMs, `${collection}.mirror-delete`,
       );
     } else {
       await withTimeout(
-        ref.set({ ...rec, _sync: { ...rec._sync, status: 'synced' } }),
+        upsertRecord(db, collection, id, { ...rec, _sync: { ...rec._sync, status: 'synced' } }),
         config.sync.readTimeoutMs, `${collection}.mirror-set`,
       );
     }
-    outbox.removeFor(collection, id); // already in Firestore — no need to re-push
+    outbox.removeFor(collection, id); // already in Supabase — no need to re-push
   } catch (err) {
     connectivity.goOffline(`${collection}.mirror: ${err.message}`);
   }

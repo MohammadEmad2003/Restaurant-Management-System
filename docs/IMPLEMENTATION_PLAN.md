@@ -2,7 +2,7 @@
 
 > **Status:** Architecture + runnable foundation delivered. This document is the master specification and roadmap. Every feature in the original request is mapped below — nothing is skipped.
 
-**Stack:** React + Vite (+ Electron shell) · Node.js + Express · Firebase Firestore/Auth/Storage · Offline-first local JSON store · Arabic + English (RTL/LTR) · PDF & Excel reporting.
+**Stack:** React + Vite (+ Electron shell) · Node.js + Express · Supabase (self-hosted or hosted Postgres, Auth/Storage) · Offline-first local JSON store · Arabic + English (RTL/LTR) · PDF & Excel reporting.
 
 ---
 
@@ -57,22 +57,22 @@
 │   │  ┌────────────────────┐   │        │  - connectivity monitor  │     │
 │   │  │ LocalJsonRepo (off)│◄──┼────────┤  - outbox queue          │     │
 │   │  ├────────────────────┤   │ failover  - conflict resolution  │     │
-│   │  │ FirestoreRepo (on) │   │        │  - mark synced           │     │
+│   │  │ SupabaseRepo (on)  │   │        │  - mark synced           │     │
 │   │  └────────────────────┘   │        └──────────────────────────┘     │
 │   └───────────┬──────────────┘                                          │
 └───────────────┼─────────────────────────────────┬──────────────────────┘
                 │ when offline / fallback           │ when online
      ┌──────────▼───────────┐          ┌────────────▼─────────────┐
-     │  Local JSON Store     │          │      FIREBASE             │
-     │  backend/src/data/*.json│        │  Firestore (data)         │
+     │  Local JSON Store     │          │      SUPABASE              │
+     │  backend/src/data/*.json│        │  Postgres (data, JSONB)   │
      │  + outbox.json (queue) │         │  Auth (optional)          │
      └───────────────────────┘          │  Storage (reports/exports)│
                                          └──────────────────────────┘
 ```
 
 **Key architectural decisions**
-- **Offline-first by default.** The backend boots against a local JSON store seeded with mock data, so the system is fully usable with zero Firebase setup. Adding Firebase credentials to `.env` flips it into "online" mode and the sync engine flushes the outbox to Firestore.
-- **Repository pattern** abstracts persistence: every service depends on an interface (`getAll`, `getById`, `create`, `update`, `remove`, `query`), never on Firestore directly. Swapping/adding a backend (e.g. Postgres) touches one folder.
+- **Offline-first by default.** The backend boots against a local JSON store seeded with mock data, so the system is fully usable with zero Supabase setup. Adding a `DATABASE_URL` to `.env` flips it into "online" mode and the sync engine flushes the outbox to Postgres.
+- **Repository pattern** abstracts persistence: every service depends on an interface (`getAll`, `getById`, `create`, `update`, `remove`, `query`), never on Postgres directly. Swapping/adding a backend touches one folder.
 - **Service layer** holds business rules (inventory deduction on order completion, cost/profit calc, attendance hours, loyalty points). Controllers stay thin.
 - **Every write is wrapped by the audit + outbox** so nothing is lost and everything is traceable.
 
@@ -376,12 +376,12 @@ backend/
 │   ├── server.js             # Express bootstrap, middleware chain, route mount
 │   ├── config/
 │   │   ├── index.js          # env loading, online/offline flag
-│   │   └── firebase.js       # Firebase Admin init (lazy, optional)
+│   │   └── database.js       # Supabase Postgres pool init (lazy, optional)
 │   ├── models/               # schema definitions + validators (one per entity)
 │   ├── repositories/
 │   │   ├── BaseRepository.js
 │   │   ├── LocalJsonRepository.js   # offline store
-│   │   ├── FirestoreRepository.js   # online store
+│   │   ├── SupabaseRepository.js    # online store
 │   │   └── index.js          # factory: picks impl per connectivity
 │   ├── services/             # business logic per module
 │   ├── controllers/          # thin HTTP handlers
@@ -444,7 +444,7 @@ sequenceDiagram
 ## 9. Authentication Flow
 
 - **Local/offline auth (default):** username + bcrypt-hashed password in `workers`. `POST /auth/login` verifies and returns a **JWT** (`{sub, role, name}`, signed with `JWT_SECRET`, 12h expiry). Frontend stores it (memory + secure storage) and sends `Authorization: Bearer`.
-- **Firebase Auth (optional, when configured):** the same endpoint can verify a Firebase ID token via Admin SDK and map the UID → worker record/role.
+- **Supabase Auth (optional, when configured):** the same endpoint can verify a Supabase Auth JWT and map the user ID → worker record/role.
 - **Middleware** `auth` validates the token, attaches `req.user`. `me` returns the current profile.
 
 ```mermaid
@@ -485,7 +485,7 @@ sequenceDiagram
 
 ## 11. Reporting & PDF Generation Architecture
 
-- **PDF**: `pdfkit` (server-side) renders branded reports → streamed to client and/or uploaded to **Firebase Storage** (when online) with a signed URL stored on the report record.
+- **PDF**: `pdfkit` (server-side) renders branded reports → streamed to client and/or uploaded to **Supabase Storage** (when online) with a signed URL stored on the report record.
 - **Excel**: `exceljs` builds `.xlsx` with typed columns, totals, and formatting.
 - **Report pipeline:** `ReportService.build(type, params)` → pulls data via services → `pdf/excel` renderer → returns buffer. One renderer registry keeps every report consistent (header with restaurant name/logo, period, generated-at, RTL/LTR aware).
 - **Coverage (every report in the spec):** attendance (per-employee, hours, overtime), finance (daily/monthly income, expenses, P&L, cash flow), inventory (current stock, low stock, waste, consumption), sales (product performance, trends, order history), customer (spending, activity), worker (salary, performance). All exportable as **PDF + Excel**, all printable.
@@ -497,7 +497,7 @@ sequenceDiagram
     participant Svc as ReportService
     participant D as Services/Repos
     participant P as pdfkit
-    participant St as Firebase Storage
+    participant St as Supabase Storage
     C->>R: GET pnl.pdf?from&to
     R->>Svc: build('pnl', params)
     Svc->>D: gather income/expense data
@@ -512,8 +512,8 @@ sequenceDiagram
 ## 12. Deployment Architecture
 
 - **Desktop (primary):** Electron app bundles the React build; the Node backend runs either embedded (child process) or as a small local service on `localhost:4000`. `electron-builder` → signed installers + auto-update feed.
-- **Backend hosting (optional central server for multi-branch):** containerize Express (Docker) → Cloud Run / Render / a VPS. Firestore is managed by Firebase. Storage by Firebase Storage.
-- **Environments:** `dev` (local JSON, mock data), `staging` (Firebase test project), `prod` (Firebase prod project). All Firebase keys come from `.env`.
+- **Backend hosting (optional central server for multi-branch):** containerize Express (Docker) → Cloud Run / Render / a VPS. The Supabase Postgres instance can be self-hosted (Docker, via the Supabase CLI) or hosted on supabase.com. Storage by Supabase Storage.
+- **Environments:** `dev` (local JSON, mock data, or self-hosted Supabase), `staging` (hosted Supabase test project), `prod` (hosted Supabase prod project). All connection details come from `.env`.
 - **CI/CD:** lint + test on push → build installers (matrix: win/mac/linux) → publish release.
 
 ---
@@ -575,18 +575,18 @@ sequenceDiagram
 - **Transport:** HTTPS in production; `helmet` security headers; CORS allow-list.
 - **Input validation:** every write validated (schema in `models/`) before persistence; reject unknown fields.
 - **RBAC** enforced server-side (never trust the client); cashier endpoints scoped to self where relevant.
-- **Audit logs** are append-only and immutable (Firestore rules forbid update/delete).
-- **Firestore security rules** gate reads/writes by auth + role; Storage rules scope report access.
+- **Audit logs** are append-only and immutable (row-level security policies forbid update/delete).
+- **Postgres row-level security (RLS)** gates reads/writes by auth + role when accessed via PostgREST; Storage policies scope report access.
 - **Secrets** only in `.env` (git-ignored). `.env.example` documents required keys with no real values.
 - **Rate limiting** on `/auth/login`; lockout after repeated failures.
-- **Least privilege** service account for Firebase Admin.
+- **Least privilege** database role for the backend's Postgres connection.
 
 ---
 
 ## 15. Scalability Recommendations
 
 - **Stateless backend** → horizontal scale behind a load balancer; JWT means no server session affinity.
-- **Firestore** scales automatically; design for it: shallow queries, composite indexes, denormalized counters (`client.totalSpent`, `client.visitCount`) updated transactionally.
+- **Postgres** scales vertically first (self-hosted or hosted Supabase); design for it: proper indexes, denormalized counters (`client.totalSpent`, `client.visitCount`) updated transactionally, and read replicas once a single primary isn't enough.
 - **Pagination & cursors** on all list endpoints; never load full collections.
 - **Caching:** React Query on the client; optional Redis for hot analytics aggregates.
 - **Background jobs** for heavy reports/aggregations (queue → worker) so requests stay fast.
@@ -661,7 +661,7 @@ sequenceDiagram
 
 **Phase 6 — Desktop & release**
 - [ ] Electron packaging, native print, auto-update.
-- [ ] CI/CD installers; Firebase prod project; docs.
+- [ ] CI/CD installers; Supabase prod project; docs.
 
 ---
 

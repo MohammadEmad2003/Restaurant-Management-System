@@ -1,5 +1,6 @@
 import { config } from '../config/index.js';
-import { getFirestore } from '../config/firebase.js';
+import { getDb } from '../config/database.js';
+import { getRecordRow, upsertRecord } from '../repositories/supabaseRecords.js';
 import { connectivity } from './connectivity.js';
 import { outbox } from './outbox.js';
 import { logger } from '../utils/logger.js';
@@ -8,12 +9,11 @@ import { withTimeout } from '../utils/withTimeout.js';
 /** A network error means we likely lost connectivity — fail over to offline. */
 function isNetworkError(err) {
   const m = String(err?.message || '');
-  return err?.code === 14 /* UNAVAILABLE */ || err?.code === 4 /* DEADLINE_EXCEEDED */ ||
-    /timed out|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|UNAVAILABLE|network/i.test(m);
+  return /timed out|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|connection|network/i.test(m);
 }
 
 /**
- * Drains the outbox to Firestore when online and resolves conflicts.
+ * Drains the outbox to Supabase when online and resolves conflicts.
  *
  * Conflict resolution:
  *  - last-write-wins: compare _sync.updatedAt; newer wins.
@@ -66,7 +66,7 @@ class SyncEngine {
   async flush() {
     if (this.running) return this.stats;
     this.running = true;
-    const db = await getFirestore();
+    const db = await getDb();
     if (!db) { this.running = false; return this.stats; }
 
     const t = config.sync.readTimeoutMs;
@@ -74,17 +74,16 @@ class SyncEngine {
     let pushedNow = 0;
     for (const entry of entries) {
       try {
-        const ref = db.collection(entry.collection).doc(entry.recordId);
-        const snap = await withTimeout(ref.get(), t, 'sync get');
-        const remote = snap.exists ? snap.data() : null;
+        const remote = await withTimeout(getRecordRow(db, entry.collection, entry.recordId), t, 'sync get');
 
         if (remote && (remote._sync?.version || 0) > (entry.version || 0)) {
           // Remote is newer → resolve.
           const resolved = this._resolve(entry.payload, remote);
-          await withTimeout(ref.set(resolved), t, 'sync set');
+          await withTimeout(upsertRecord(db, entry.collection, entry.recordId, resolved), t, 'sync set');
           this.stats.conflicts += 1;
         } else {
-          await withTimeout(ref.set({ ...entry.payload, _sync: { ...entry.payload._sync, status: 'synced' } }), t, 'sync set');
+          const payload = { ...entry.payload, _sync: { ...entry.payload._sync, status: 'synced' } };
+          await withTimeout(upsertRecord(db, entry.collection, entry.recordId, payload), t, 'sync set');
         }
         outbox.remove(entry.id);
         this.stats.pushed += 1;

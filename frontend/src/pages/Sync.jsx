@@ -41,7 +41,7 @@ export default function Sync() {
 
       <div className="grid grid--2">
         <Card title={<span className="row" style={{ gap: 8 }}><Database size={16} /> {t('sync.engineStatus', 'Engine Status')}</span>}>
-          <Row label="Mode" value={status.online ? t('sync.modeOnline', 'Firebase (online)') : t('sync.modeOffline', 'Local JSON (offline)')} />
+          <Row label="Mode" value={status.online ? t('sync.modeOnline', 'Supabase (online)') : t('sync.modeOffline', 'Local JSON (offline)')} />
           <Row label="Conflict policy" value={status.policy} />
           <Row label="Last run" value={status.lastRun ? datetime(status.lastRun) : t('sync.notRunYet', 'Not run yet')} />
           <Row label="Errors" value={status.errors || 0} />
@@ -49,8 +49,8 @@ export default function Sync() {
         <Card title={t('sync.howItWorks', 'How it works')}>
           <ol style={{ paddingInlineStart: 18, lineHeight: 1.9, fontSize: 13.5, color: 'var(--ink-2)' }}>
             <li>{t('sync.step1', 'Every write saves to the local JSON store instantly and queues in the outbox.')}</li>
-            <li>{t('sync.step2', 'A monitor checks Firebase connectivity continuously.')}</li>
-            <li>{t('sync.step3', 'When online, the engine flushes the outbox to Firestore.')}</li>
+            <li>{t('sync.step2', 'A monitor checks Supabase connectivity continuously.')}</li>
+            <li>{t('sync.step3', 'When online, the engine flushes the outbox to Supabase.')}</li>
             <li>{t('sync.step4', `Conflicts resolve via <b>{status.policy}</b> (+ field-merge for phones/addresses, tombstones for deletes).`)}</li>
             <li>{t('sync.step5', 'Synced records are marked; no data is ever lost.')}</li>
           </ol>

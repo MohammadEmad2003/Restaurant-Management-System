@@ -11,7 +11,8 @@ export const config = {
   port: Number(process.env.PORT) || 4000,
 
   jwtSecret: process.env.JWT_SECRET || 'dev-secret-change-me',
-  jwtExpiresIn: process.env.JWT_EXPIRES_IN || '12h',
+  jwtExpiresIn: process.env.JWT_EXPIRES_IN || '24h',
+  jwtExpiresInHours: Number(process.env.JWT_EXPIRES_IN_HOURS) || 24,
 
   persistenceMode: process.env.PERSISTENCE_MODE || 'auto', // auto | local | supabase
   sync: {

@@ -12,6 +12,9 @@ export const goodsService = {
   async purchase(id, { quantity, unitPrice, supplier }, user) {
     const good = await repo('goods').getById(id);
     if (!good) throw new HttpError(404, 'good not found');
+    if (user?.restaurantId && good.restaurantId && good.restaurantId !== user.restaurantId) {
+      throw new HttpError(404, 'good not found');
+    }
     const qty = Number(quantity);
     const price = Number(unitPrice ?? good.purchasePrice);
     const totalCost = +(qty * price).toFixed(2);
@@ -23,25 +26,27 @@ export const goodsService = {
     await repo('purchases').create({
       goodId: id, quantity: qty, unitPrice: price, totalCost,
       supplier: supplier || '', date: new Date().toISOString().slice(0, 10),
+      restaurantId: user?.restaurantId,
     });
     await repo('expenses').create({
       type: 'purchase', amount: totalCost,
       description: `Purchase: ${qty}${good.unit} ${good.name}`,
       refId: id, date: new Date().toISOString().slice(0, 10),
+      restaurantId: user?.restaurantId,
     });
     await recordAudit(user, 'GOOD_PURCHASED', 'goods', id, { after: updated });
     return updated;
   },
 
   /** Goods at or below their minimum stock level. */
-  async lowStock() {
-    const rows = await repo('goods').getAll();
+  async lowStock(user) {
+    const rows = await repo('goods').getAll({ restaurantId: user?.restaurantId });
     return rows.filter((g) => g.quantityAvailable <= g.minimumStockLevel);
   },
 
   /** Total inventory value at purchase price. */
-  async valuation() {
-    const rows = await repo('goods').getAll();
+  async valuation(user) {
+    const rows = await repo('goods').getAll({ restaurantId: user?.restaurantId });
     const items = rows.map((g) => ({
       id: g.id, name: g.name, unit: g.unit,
       quantity: g.quantityAvailable, unitPrice: g.purchasePrice,

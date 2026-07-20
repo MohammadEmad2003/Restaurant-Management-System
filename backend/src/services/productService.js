@@ -9,9 +9,9 @@ const base = createCrudService('products', { entityName: 'product' });
  * Pass a pre-built `goodById` map when costing many products so we don't refetch
  * the whole goods collection per product (that N+1 made the products page slow).
  */
-async function computeCost(product, goodById) {
+async function computeCost(product, goodById, user) {
   if (!goodById) {
-    const goods = await repo('goods').getAll();
+    const goods = await repo('goods').getAll({ restaurantId: user?.restaurantId });
     goodById = Object.fromEntries(goods.map((g) => [g.id, g]));
   }
   let cost = 0;
@@ -35,30 +35,33 @@ async function computeCost(product, goodById) {
 export const productService = {
   ...base,
 
-  async list(filter) {
-    const products = await base.list(filter);
+  async list(filter, user) {
+    const products = await base.list(filter, user);
     // Fetch goods once, then cost every product against the same map.
-    const goods = await repo('goods').getAll();
+    const goods = await repo('goods').getAll({ restaurantId: user?.restaurantId });
     const goodById = Object.fromEntries(goods.map((g) => [g.id, g]));
     return products.map((p) => ({ ...p, ...computeCostSync(p, goodById) }));
   },
 
-  async cost(id) {
+  async cost(id, user) {
     const product = await repo('products').getById(id);
     if (!product) throw new HttpError(404, 'product not found');
-    return { product: { id: product.id, name: product.name }, ...(await computeCost(product)) };
+    if (user?.restaurantId && product.restaurantId && product.restaurantId !== user.restaurantId) {
+      throw new HttpError(404, 'product not found');
+    }
+    return { product: { id: product.id, name: product.name }, ...(await computeCost(product, null, user)) };
   },
 
   // Create/update return the product with cost/profit/margin already computed so
   // the UI can show correct numbers immediately without a second round-trip.
   async create(data, user) {
     const created = await base.create(data, user);
-    return { ...created, ...(await computeCost(created)) };
+    return { ...created, ...(await computeCost(created, null, user)) };
   },
 
   async update(id, patch, user) {
     const updated = await base.update(id, patch, user);
-    return { ...updated, ...(await computeCost(updated)) };
+    return { ...updated, ...(await computeCost(updated, null, user)) };
   },
 
   computeCost,

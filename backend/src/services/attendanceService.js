@@ -1,8 +1,11 @@
 import { repo } from '../repositories/index.js';
+import { secureStore } from '../repositories/secureStore.js';
 import { recordAudit } from '../middleware/audit.js';
 import { HttpError } from '../middleware/errorHandler.js';
 import { verifyPassword, sanitize } from '../utils/hash.js';
 import { shiftService } from './shiftService.js';
+
+const store = secureStore();
 
 const STANDARD_DAY_HOURS = 8;
 const GRACE_MINUTES = 5;
@@ -37,9 +40,9 @@ function shiftLengthHours(shift) {
  * worker's weekly schedule. No schedule for that weekday → it's the worker's day
  * off, so the whole shift counts as overtime and there's no lateness.
  */
-async function resolveShift(workerId, ts) {
+async function resolveShift(workerId, ts, user) {
   const d = new Date(ts);
-  const schedule = await shiftService.scheduleFor(workerId, d.getDay());
+  const schedule = await shiftService.scheduleFor(workerId, d.getDay(), user);
   if (!schedule) {
     return { shift: shiftLateness(ts).shift, lateMinutes: 0, isOffDay: true, schedule: null };
   }
@@ -57,12 +60,25 @@ async function resolveShift(workerId, ts) {
 }
 
 export const attendanceService = {
+  /** Resolve the worker id linked to an authenticated user for clock-in/out. */
+  async resolveWorkerId(userId) {
+    const user = await store.findOne('users', { id: userId });
+    if (!user) throw new HttpError(404, 'User not found');
+    if (!user.legacyWorkerId) throw new HttpError(400, 'No worker record linked to this user');
+    const worker = await repo('workers').getById(user.legacyWorkerId);
+    if (!worker) throw new HttpError(404, 'Worker not found');
+    return worker.id;
+  },
+
   async clockIn(workerId, user) {
-    const open = (await repo('attendance').getAll({ workerId })).find((a) => !a.checkOutTime && a.status !== 'absent');
+    const open = (await repo('attendance').getAll({ workerId, restaurantId: user?.restaurantId })).find((a) => !a.checkOutTime && a.status !== 'absent');
     if (open) throw new HttpError(409, 'Already clocked in');
     const checkInTime = Date.now();
     const worker = await repo('workers').getById(workerId);
-    const { shift, lateMinutes, isOffDay } = await resolveShift(workerId, checkInTime);
+    if (user?.restaurantId && worker?.restaurantId && worker.restaurantId !== user.restaurantId) {
+      throw new HttpError(404, 'worker not found');
+    }
+    const { shift, lateMinutes, isOffDay } = await resolveShift(workerId, checkInTime, user);
     const record = await repo('attendance').create({
       workerId,
       workerName: worker?.name || null,
@@ -76,6 +92,7 @@ export const attendanceService = {
       isOffDay,
       overtimeApproved: true,
       status: 'present',
+      restaurantId: user?.restaurantId,
     });
     await recordAudit(user, 'CLOCK_IN', 'attendance', record.id, { after: record });
     return record;
@@ -85,16 +102,16 @@ export const attendanceService = {
    * Kiosk-style attendance: a worker enters their own username + password on a
    * shared device and is toggled between clocked-in and clocked-out.
    */
-  async markByCredentials(username, password) {
+  async markByCredentials(username, password, user) {
     if (!username || !password) throw new HttpError(400, 'Username and password are required');
-    const worker = (await repo('workers').getAll()).find((w) => w.username === username);
+    const worker = (await repo('workers').getAll({ restaurantId: user?.restaurantId })).find((w) => w.username === username);
     if (!worker) throw new HttpError(401, 'Invalid credentials');
     if (worker.status === 'inactive') throw new HttpError(403, 'Account disabled');
     const ok = await verifyPassword(password, worker.passwordHash || '');
     if (!ok) throw new HttpError(401, 'Invalid credentials');
 
-    const actor = { sub: worker.id, role: worker.role, name: worker.name };
-    const open = (await repo('attendance').getAll({ workerId: worker.id })).find((a) => !a.checkOutTime && a.status !== 'absent');
+    const actor = { sub: worker.id, role: worker.role, name: worker.name, restaurantId: user?.restaurantId };
+    const open = (await repo('attendance').getAll({ workerId: worker.id, restaurantId: user?.restaurantId })).find((a) => !a.checkOutTime && a.status !== 'absent');
     if (open) {
       const record = await this.clockOut(worker.id, actor);
       return { action: 'clock-out', worker: sanitize(worker), record };
@@ -104,7 +121,7 @@ export const attendanceService = {
   },
 
   async clockOut(workerId, user) {
-    const open = (await repo('attendance').getAll({ workerId })).find((a) => !a.checkOutTime && a.status !== 'absent');
+    const open = (await repo('attendance').getAll({ workerId, restaurantId: user?.restaurantId })).find((a) => !a.checkOutTime && a.status !== 'absent');
     if (!open) throw new HttpError(409, 'Not clocked in');
     const checkOutTime = Date.now();
     const totalHours = +(((checkOutTime - open.checkInTime) / 3.6e6)).toFixed(2);
@@ -114,7 +131,7 @@ export const attendanceService = {
     if (open.isOffDay) {
       overtimeHours = totalHours;
     } else {
-      const schedule = await shiftService.scheduleFor(workerId, new Date(open.checkInTime).getDay());
+      const schedule = await shiftService.scheduleFor(workerId, new Date(open.checkInTime).getDay(), user);
       overtimeHours = Math.max(0, +(totalHours - shiftLengthHours(schedule)).toFixed(2));
     }
     const updated = await repo('attendance').update(open.id, { checkOutTime, totalHours, overtimeHours });
@@ -126,6 +143,9 @@ export const attendanceService = {
   async setExcuse(id, { excused, lateMinutes }, user) {
     const rec = await repo('attendance').getById(id);
     if (!rec) throw new HttpError(404, 'attendance record not found');
+    if (user?.restaurantId && rec.restaurantId && rec.restaurantId !== user.restaurantId) {
+      throw new HttpError(404, 'attendance record not found');
+    }
     const patch = {};
     if (excused !== undefined) patch.excused = !!excused;
     if (lateMinutes !== undefined) patch.lateMinutes = Math.max(0, Number(lateMinutes) || 0);
@@ -138,6 +158,9 @@ export const attendanceService = {
   async setOvertime(id, { approved, overtimeHours }, user) {
     const rec = await repo('attendance').getById(id);
     if (!rec) throw new HttpError(404, 'attendance record not found');
+    if (user?.restaurantId && rec.restaurantId && rec.restaurantId !== user.restaurantId) {
+      throw new HttpError(404, 'attendance record not found');
+    }
     const patch = {};
     if (approved !== undefined) patch.overtimeApproved = !!approved;
     if (overtimeHours !== undefined) patch.overtimeHours = Math.max(0, Number(overtimeHours) || 0);
@@ -148,7 +171,7 @@ export const attendanceService = {
 
   /** Admin: apply/remove overtime for every record in a month (or a single day). */
   async bulkOvertime({ approved = true, month, date } = {}, user) {
-    let rows = await repo('attendance').getAll();
+    let rows = await repo('attendance').getAll({ restaurantId: user?.restaurantId });
     if (date) rows = rows.filter((r) => r.date === date);
     else if (month) rows = rows.filter((r) => (r.date || '').startsWith(month));
     let count = 0;
@@ -170,9 +193,9 @@ export const attendanceService = {
     const day = date || todayStr();
     const dow = new Date(day).getDay();
     const [workers, dayRows, shifts] = await Promise.all([
-      repo('workers').getAll(),
-      repo('attendance').getAll(),
-      repo('shifts').getAll(),
+      repo('workers').getAll({ restaurantId: user?.restaurantId }),
+      repo('attendance').getAll({ restaurantId: user?.restaurantId }),
+      repo('shifts').getAll({ restaurantId: user?.restaurantId }),
     ]);
     const present = new Set(dayRows.filter((r) => r.date === day).map((r) => r.workerId));
     const scheduled = new Set(shifts.filter((s) => Number(s.dayOfWeek) === dow).map((s) => s.workerId));
@@ -183,6 +206,7 @@ export const attendanceService = {
         workerId: w.id, workerName: w.name, date: day,
         totalHours: 0, overtimeHours: 0, lateMinutes: 0,
         status: 'absent', overtimeApproved: false,
+        restaurantId: user?.restaurantId,
       });
       created.push(rec);
     }
@@ -190,13 +214,13 @@ export const attendanceService = {
     return { date: day, marked: created.length };
   },
 
-  async list({ workerId, from, to } = {}) {
-    let rows = await repo('attendance').getAll(workerId ? { workerId } : {});
+  async list({ workerId, from, to } = {}, user) {
+    let rows = await repo('attendance').getAll({ ...(workerId ? { workerId } : {}), restaurantId: user?.restaurantId });
     if (from) rows = rows.filter((r) => r.date >= from);
     if (to) rows = rows.filter((r) => r.date <= to);
     // Backfill worker names for older records that didn't snapshot them.
     if (rows.some((r) => !r.workerName)) {
-      const workers = await repo('workers').getAll();
+      const workers = await repo('workers').getAll({ restaurantId: user?.restaurantId });
       const nameById = Object.fromEntries(workers.map((w) => [w.id, w.name]));
       rows = rows.map((r) => ({ ...r, workerName: r.workerName || nameById[r.workerId] || r.workerId }));
     }
@@ -204,8 +228,8 @@ export const attendanceService = {
   },
 
   /** Monthly aggregate per worker (approved overtime + absence count). */
-  async monthlyReport({ month, from, to } = {}) {
-    let rows = await repo('attendance').getAll();
+  async monthlyReport({ month, from, to } = {}, user) {
+    let rows = await repo('attendance').getAll({ restaurantId: user?.restaurantId });
     if (from || to) {
       if (from) rows = rows.filter((r) => (r.date || '') >= from);
       if (to) rows = rows.filter((r) => (r.date || '') <= to);
@@ -222,7 +246,7 @@ export const attendanceService = {
       if (r.overtimeApproved !== false) w.overtime += r.overtimeHours || 0;
       if (!r.excused) w.lateMinutes += r.lateMinutes || 0;
     }
-    const workers = await repo('workers').getAll();
+    const workers = await repo('workers').getAll({ restaurantId: user?.restaurantId });
     return Object.values(byWorker).map((w) => ({
       ...w,
       workerName: workers.find((x) => x.id === w.workerId)?.name || w.workerId,

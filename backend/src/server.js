@@ -28,7 +28,11 @@ app.use('/api', routes);
 app.use(notFound);
 app.use(errorHandler);
 
+import { runMigrations } from './migrations/runMigrations.js';
+
 async function start() {
+  await runMigrations();
+
   // Mock-data seeding is opt-in only now (`npm run seed`) — real data comes
   // from Supabase/the local store, not an auto-generated demo dataset.
 

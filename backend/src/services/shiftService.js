@@ -7,14 +7,14 @@ export const shiftService = {
   ...base,
 
   /** The shift a worker is scheduled for on a given day of week (0=Sun…6=Sat), if any. */
-  async scheduleFor(workerId, dayOfWeek) {
-    const shifts = await repo('shifts').getAll({ workerId });
+  async scheduleFor(workerId, dayOfWeek, user) {
+    const shifts = await repo('shifts').getAll({ workerId, restaurantId: user?.restaurantId });
     return shifts.find((s) => Number(s.dayOfWeek) === Number(dayOfWeek)) || null;
   },
 
   /** Whole weekly plan grouped by day, for the schedule grid. */
-  async weekly() {
-    const shifts = await repo('shifts').getAll();
+  async weekly(user) {
+    const shifts = await repo('shifts').getAll({ restaurantId: user?.restaurantId });
     const byDay = {};
     for (let d = 0; d < 7; d++) byDay[d] = [];
     for (const s of shifts) (byDay[Number(s.dayOfWeek)] ||= []).push(s);
@@ -22,8 +22,8 @@ export const shiftService = {
   },
 
   /** Simple forecast-based staffing suggestion from recent order volume. */
-  async forecast() {
-    const orders = (await repo('orders').getAll()).filter((o) => o.status === 'completed');
+  async forecast(user) {
+    const orders = (await repo('orders').getAll({ restaurantId: user?.restaurantId })).filter((o) => o.status === 'completed');
     const byHour = Array(24).fill(0);
     for (const o of orders) byHour[new Date(o.orderDate).getHours()] += 1;
     const peak = byHour.map((count, hour) => ({ hour, count }))

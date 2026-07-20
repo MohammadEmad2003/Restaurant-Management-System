@@ -4,15 +4,18 @@ import { HttpError } from '../middleware/errorHandler.js';
 import { shortCode } from '../utils/ids.js';
 
 export const goodsCheckService = {
-  list: (filter) => repo('goodsChecks').getAll(filter),
+  list: (filter, user) => repo('goodsChecks').getAll({ ...filter, restaurantId: user?.restaurantId }),
 
   /** Submit a physical count → compute loss, adjust inventory to actual. */
   async create(data, user) {
     const good = await repo('goods').getById(data.goodId);
     if (!good) throw new HttpError(404, 'good not found');
+    if (user?.restaurantId && good.restaurantId && good.restaurantId !== user.restaurantId) {
+      throw new HttpError(404, 'good not found');
+    }
     const expectedQuantity = good.quantityAvailable;
     const actualQuantity = Number(data.actualQuantity);
-    const difference = +(expectedQuantity - actualQuantity).toFixed(3); // positive = loss
+    const difference = +(expectedQuantity - actualQuantity).toFixed(3);
 
     const check = await repo('goodsChecks').create({
       ...data,
@@ -23,20 +26,20 @@ export const goodsCheckService = {
       lossValue: +(Math.max(0, difference) * (good.purchasePrice || 0)).toFixed(2),
       checkedBy: user?.sub || null,
       date: data.date || new Date().toISOString().slice(0, 10),
+      restaurantId: user?.restaurantId,
     });
-    // adjust system stock to the counted reality
     await repo('goods').update(good.id, { quantityAvailable: actualQuantity });
     await recordAudit(user, 'GOODS_CHECKED', 'goodsChecks', check.id, { after: check });
     return check;
   },
 
   /** Waste report across a date range, optionally filtered by reason. */
-  async wasteReport({ from, to, reason } = {}) {
-    let checks = await repo('goodsChecks').getAll();
+  async wasteReport({ from, to, reason } = {}, user) {
+    let checks = await repo('goodsChecks').getAll({ restaurantId: user?.restaurantId });
     if (from) checks = checks.filter((c) => c.date >= from);
     if (to) checks = checks.filter((c) => c.date <= to);
     if (reason) checks = checks.filter((c) => c.reason === reason);
-    const goods = await repo('goods').getAll();
+    const goods = await repo('goods').getAll({ restaurantId: user?.restaurantId });
     const byGood = {};
     let totalLossValue = 0;
     for (const c of checks) {

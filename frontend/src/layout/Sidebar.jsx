@@ -56,7 +56,7 @@ const SECTIONS = [
 
 export default function Sidebar({ open }) {
   const { t } = useTranslation();
-  const isAdmin = useAuth((s) => s.user?.role === 'admin');
+  const can = useAuth((s) => s.can);
   const { data: features } = useFetch('/features', []); // per-customer feature tiers (backend .env)
 
   return (
@@ -78,7 +78,7 @@ export default function Sidebar({ open }) {
         </div>
 
         {SECTIONS.map((section) => {
-          const items = section.items.filter((i) => (!i.admin || isAdmin) && (!features || features[i.featureKey || i.label] !== false));
+          const items = section.items.filter((i) => (!i.admin || can('admin')) && (!features || features[i.featureKey || i.label] !== false));
           if (!items.length) return null;
           return (
             <div key={section.key} style={{ marginBottom: 18 }}>

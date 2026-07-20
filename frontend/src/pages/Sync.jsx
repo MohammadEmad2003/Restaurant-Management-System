@@ -9,7 +9,7 @@ import { datetime } from '../utils/format.js';
 
 export default function Sync() {
   const { t } = useTranslation();
-  const isAdmin = useAuth((s) => s.user?.role === 'admin');
+  const can = useAuth((s) => s.can);
   const notify = useUI((s) => s.notify);
   const [status, setStatus] = useState(null);
   const [flushing, setFlushing] = useState(false);
@@ -29,7 +29,7 @@ export default function Sync() {
   return (
     <div className="fade-in">
       <PageHeader title={t('nav.sync')} subtitle={t('sync.subtitle', 'Offline-first synchronization engine')}>
-        {isAdmin && <button className="btn btn--primary" onClick={flush} disabled={flushing}><RefreshCw size={16} className={flushing ? 'spin' : ''} /> {t('sync.flushNow', 'Flush now')}</button>}
+        {can('admin') && <button className="btn btn--primary" onClick={flush} disabled={flushing}><RefreshCw size={16} className={flushing ? 'spin' : ''} /> {t('sync.flushNow', 'Flush now')}</button>}
       </PageHeader>
 
       <div className="grid grid--stats" style={{ marginBottom: 18 }}>

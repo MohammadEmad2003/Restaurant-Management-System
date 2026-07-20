@@ -16,8 +16,8 @@ function periodKey(ts, period) {
   return dayKey(ts);
 }
 
-async function completedOrders() {
-  return (await repo('orders').getAll()).filter((o) => o.status === 'completed');
+async function completedOrders(user) {
+  return (await repo('orders').getAll({ restaurantId: user?.restaurantId })).filter((o) => o.status === 'completed');
 }
 
 /** Build a [from, to) millisecond window from optional YYYY-MM-DD bounds. */
@@ -29,8 +29,8 @@ function range({ from, to } = {}) {
 }
 
 export const financeService = {
-  async income({ period = 'daily', from, to } = {}) {
-    const orders = await completedOrders();
+  async income({ period = 'daily', from, to } = {}, user) {
+    const orders = await completedOrders(user);
     const { fromTs, toTs } = range({ from, to });
     const buckets = {};
     for (const o of orders) {
@@ -43,8 +43,8 @@ export const financeService = {
     return { period, total: +series.reduce((s, x) => s + x.value, 0).toFixed(2), series };
   },
 
-  async expenses({ period = 'daily', from, to } = {}) {
-    const rows = await repo('expenses').getAll();
+  async expenses({ period = 'daily', from, to } = {}, user) {
+    const rows = await repo('expenses').getAll({ restaurantId: user?.restaurantId });
     const { fromTs, toTs } = range({ from, to });
     const buckets = {};
     const byType = {};
@@ -59,15 +59,15 @@ export const financeService = {
     return { period, total: +series.reduce((s, x) => s + x.value, 0).toFixed(2), byType, series };
   },
 
-  async profit({ period = 'monthly', from, to } = {}) {
-    const [inc, exp] = await Promise.all([this.income({ period, from, to }), this.expenses({ period, from, to })]);
+  async profit({ period = 'monthly', from, to } = {}, user) {
+    const [inc, exp] = await Promise.all([this.income({ period, from, to }, user), this.expenses({ period, from, to }, user)]);
     const net = +(inc.total - exp.total).toFixed(2);
     const margin = inc.total ? +((net / inc.total) * 100).toFixed(1) : 0;
     return { period, revenue: inc.total, expenses: exp.total, netProfit: net, profitMargin: margin };
   },
 
-  async cashflow({ period = 'monthly', from, to } = {}) {
-    const [inc, exp] = await Promise.all([this.income({ period, from, to }), this.expenses({ period, from, to })]);
+  async cashflow({ period = 'monthly', from, to } = {}, user) {
+    const [inc, exp] = await Promise.all([this.income({ period, from, to }, user), this.expenses({ period, from, to }, user)]);
     const keys = [...new Set([...inc.series.map((s) => s.key), ...exp.series.map((s) => s.key)])].sort();
     const incMap = Object.fromEntries(inc.series.map((s) => [s.key, s.value]));
     const expMap = Object.fromEntries(exp.series.map((s) => [s.key, s.value]));

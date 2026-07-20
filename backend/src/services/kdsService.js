@@ -3,8 +3,8 @@ import { HttpError } from '../middleware/errorHandler.js';
 
 export const kdsService = {
   /** Active tickets (not yet served), with elapsed prep timer. */
-  async tickets() {
-    const rows = (await repo('kdsTickets').getAll()).filter((t) => t.status !== 'served');
+  async tickets(user) {
+    const rows = (await repo('kdsTickets').getAll({ restaurantId: user?.restaurantId })).filter((t) => t.status !== 'served');
     return rows
       .map((t) => ({ ...t, elapsedSeconds: Math.floor((Date.now() - (t.startedAt || t.createdAt)) / 1000) }))
       .sort((a, b) => {
@@ -16,7 +16,10 @@ export const kdsService = {
   async setStatus(id, status, user) {
     const ticket = await repo('kdsTickets').getById(id);
     if (!ticket) throw new HttpError(404, 'ticket not found');
-    const patch = { status };
+    if (user?.restaurantId && ticket.restaurantId && ticket.restaurantId !== user.restaurantId) {
+      throw new HttpError(404, 'ticket not found');
+    }
+    const patch = { status, restaurantId: ticket.restaurantId };
     if (status === 'ready') patch.readyAt = Date.now();
     return repo('kdsTickets').update(id, patch);
   },

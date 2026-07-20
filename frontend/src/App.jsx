@@ -5,10 +5,10 @@ import { useUI } from './store/ui.js';
 import { ConfirmHost, Spinner } from './components/ui.jsx';
 import AppShell from './layout/AppShell.jsx';
 import Login from './pages/Login.jsx';
+import SuperAdminLogin from './pages/SuperAdminLogin.jsx';
+import SuperAdminDashboard from './pages/SuperAdminDashboard.jsx';
+import LicenseActivation from './pages/LicenseActivation.jsx';
 
-// Pages are code-split: each becomes its own chunk loaded on first navigation,
-// so the initial bundle no longer ships all 25 screens (plus recharts) up front.
-// Login and the shell stay eager because they are on the critical first paint.
 const Dashboard = lazy(() => import('./pages/Dashboard.jsx'));
 const Orders = lazy(() => import('./pages/Orders.jsx'));
 const CashierShift = lazy(() => import('./pages/CashierShift.jsx'));
@@ -53,6 +53,25 @@ function Protected({ children, admin }) {
   return children;
 }
 
+function SuperAdminProtected({ children }) {
+  const user = useAuth((s) => s.user);
+  if (!user || user.role !== 'super_admin') return <Navigate to="/superadmin/login" replace />;
+  return children;
+}
+
+function ActivationGuard({ children }) {
+  const { requiresActivation, user } = useAuth((s) => ({ requiresActivation: s.requiresActivation, user: s.user }));
+  if (requiresActivation && user?.role === 'admin') return <LicenseActivation />;
+  return children;
+}
+
+function RootRoute() {
+  const user = useAuth((s) => s.user);
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role === 'super_admin') return <Navigate to="/superadmin" replace />;
+  return <Dashboard />;
+}
+
 export default function App() {
   return (
     <HashRouter>
@@ -61,8 +80,11 @@ export default function App() {
       <Suspense fallback={<Spinner />}>
         <Routes>
           <Route path="/login" element={<Login />} />
-          <Route element={<Protected><AppShell /></Protected>}>
-            <Route index element={<Dashboard />} />
+          <Route path="/superadmin/login" element={<SuperAdminLogin />} />
+          <Route path="/superadmin" element={<SuperAdminProtected><SuperAdminDashboard /></SuperAdminProtected>} />
+
+          <Route element={<Protected><ActivationGuard><AppShell /></ActivationGuard></Protected>}>
+            <Route index element={<RootRoute />} />
             <Route path="orders" element={<Orders />} />
             <Route path="cashier-shift" element={<CashierShift />} />
             <Route path="kitchen" element={<Kitchen />} />

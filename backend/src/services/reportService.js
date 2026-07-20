@@ -13,6 +13,7 @@ import { goodsCheckService } from './goodsCheckService.js';
 import { analyticsService } from './analyticsService.js';
 import { attendanceService } from './attendanceService.js';
 import { salaryService } from './salaryService.js';
+import { settingsService } from './settingsService.js';
 import { HttpError } from '../middleware/errorHandler.js';
 
 const shortLabel = (s) => String(s || '').split('—')[0].trim();
@@ -22,10 +23,11 @@ const money = (v) => `${Number(v || 0).toFixed(2)}`;
 /**
  * Report registry. Each entry returns { title, columns, rows, totals }.
  * Used by both the PDF and Excel renderers so output stays consistent.
+ * Every report is filtered by the authenticated user's restaurantId.
  */
 const REPORTS = {
-  async attendance(params) {
-    const rows = await attendanceService.monthlyReport({ month: params.month });
+  async attendance(params, user) {
+    const rows = await attendanceService.monthlyReport({ month: params.month }, user);
     return {
       title: 'Attendance & Working Hours',
       titleAr: 'الحضور وساعات العمل',
@@ -44,8 +46,8 @@ const REPORTS = {
     };
   },
 
-  async income(params) {
-    const data = await financeService.income({ period: params.period || 'daily', from: params.from, to: params.to });
+  async income(params, user) {
+    const data = await financeService.income({ period: params.period || 'daily', from: params.from, to: params.to }, user);
     return {
       title: `Income (${data.period})`,
       titleAr: `الإيرادات (${data.period})`,
@@ -59,8 +61,8 @@ const REPORTS = {
     };
   },
 
-  async expenses(params) {
-    const data = await financeService.expenses({ period: params.period || 'monthly', from: params.from, to: params.to });
+  async expenses(params, user) {
+    const data = await financeService.expenses({ period: params.period || 'monthly', from: params.from, to: params.to }, user);
     return {
       title: `Expenses (${data.period})`,
       titleAr: `المصروفات (${data.period})`,
@@ -74,8 +76,8 @@ const REPORTS = {
     };
   },
 
-  async pnl(params) {
-    const p = await financeService.profit({ period: params.period || 'monthly', from: params.from, to: params.to });
+  async pnl(params, user) {
+    const p = await financeService.profit({ period: params.period || 'monthly', from: params.from, to: params.to }, user);
     return {
       title: 'Profit & Loss',
       titleAr: 'الرصيد',
@@ -92,8 +94,8 @@ const REPORTS = {
     };
   },
 
-  async stock() {
-    const goods = await repo('goods').getAll();
+  async stock(params, user) {
+    const goods = await repo('goods').getAll({ restaurantId: user?.restaurantId });
     return {
       title: 'Current Stock',
       titleAr: 'المخزون الحالي',
@@ -114,8 +116,8 @@ const REPORTS = {
     };
   },
 
-  async 'low-stock'() {
-    const rows = await goodsService.lowStock();
+  async 'low-stock'(params, user) {
+    const rows = await goodsService.lowStock(user);
     return {
       title: 'Low Stock Alerts',
       titleAr: 'تنبيهات المخزون المنخفض',
@@ -129,8 +131,8 @@ const REPORTS = {
     };
   },
 
-  async waste(params) {
-    const data = await goodsCheckService.wasteReport({ from: params.from, to: params.to });
+  async waste(params, user) {
+    const data = await goodsCheckService.wasteReport({ from: params.from, to: params.to }, user);
     return {
       title: 'Waste / Loss Report',
       titleAr: 'تقرير الهدر/الخسائر',
@@ -146,8 +148,8 @@ const REPORTS = {
     };
   },
 
-  async 'product-performance'() {
-    const sales = await analyticsService.sales();
+  async 'product-performance'(params, user) {
+    const sales = await analyticsService.sales(user);
     return {
       title: 'Product Performance',
       titleAr: 'أداء المنتجات',
@@ -162,10 +164,10 @@ const REPORTS = {
     };
   },
 
-  async 'order-history'(params) {
+  async 'order-history'(params, user) {
     const fromTs = params.from ? new Date(params.from).getTime() : -Infinity;
     const toTs = params.to ? new Date(params.to).getTime() + 864e5 : Infinity;
-    const orders = (await repo('orders').getAll())
+    const orders = (await repo('orders').getAll({ restaurantId: user?.restaurantId }))
       .filter((o) => (o.orderDate || 0) >= fromTs && (o.orderDate || 0) < toTs)
       .sort((a, b) => b.orderDate - a.orderDate).slice(0, 200);
     return {
@@ -183,8 +185,8 @@ const REPORTS = {
     };
   },
 
-  async 'customer-spending'() {
-    const clients = (await repo('clients').getAll()).sort((a, b) => (b.totalSpent || 0) - (a.totalSpent || 0));
+  async 'customer-spending'(params, user) {
+    const clients = (await repo('clients').getAll({ restaurantId: user?.restaurantId })).sort((a, b) => (b.totalSpent || 0) - (a.totalSpent || 0));
     return {
       title: 'Customer Spending',
       titleAr: 'إنفاق العملاء',
@@ -200,9 +202,9 @@ const REPORTS = {
     };
   },
 
-  async salary(params) {
+  async salary(params, user) {
     const month = params.month || new Date().toISOString().slice(0, 7);
-    const rows = await repo('salaries').getAll({ month });
+    const rows = await repo('salaries').getAll({ month, restaurantId: user?.restaurantId });
     return {
       title: `Salary Report (${month})`,
       titleAr: `تقرير الرواتب (${month})`,
@@ -219,8 +221,8 @@ const REPORTS = {
     };
   },
 
-  async 'worker-performance'() {
-    const data = await analyticsService.workers();
+  async 'worker-performance'(params, user) {
+    const data = await analyticsService.workers(user);
     return {
       title: 'Worker Performance',
       titleAr: 'أداء العمال',
@@ -234,8 +236,8 @@ const REPORTS = {
     };
   },
 
-  async 'sales-by-location'(params) {
-    const rows = await analyticsService.byLocation({ from: params.from, to: params.to });
+  async 'sales-by-location'(params, user) {
+    const rows = await analyticsService.byLocation({ from: params.from, to: params.to }, user);
     return {
       title: 'Sales by Location',
       titleAr: 'المبيعات حسب الموقع',
@@ -255,8 +257,8 @@ const REPORTS = {
     };
   },
 
-  async reservations() {
-    const rows = (await repo('reservations').getAll()).sort((a, b) => (b.dateTime || 0) - (a.dateTime || 0)).slice(0, 200);
+  async reservations(params, user) {
+    const rows = (await repo('reservations').getAll({ restaurantId: user?.restaurantId })).sort((a, b) => (b.dateTime || 0) - (a.dateTime || 0)).slice(0, 200);
     return {
       title: 'Reservations',
       titleAr: 'الحجوزات',
@@ -271,8 +273,8 @@ const REPORTS = {
     };
   },
 
-  async loyalty() {
-    const clients = (await repo('clients').getAll()).filter((c) => (c.loyaltyPoints || 0) > 0)
+  async loyalty(params, user) {
+    const clients = (await repo('clients').getAll({ restaurantId: user?.restaurantId })).filter((c) => (c.loyaltyPoints || 0) > 0)
       .sort((a, b) => (b.loyaltyPoints || 0) - (a.loyaltyPoints || 0));
     return {
       title: 'Loyalty Points',
@@ -289,9 +291,9 @@ const REPORTS = {
     };
   },
 
-  async purchases() {
-    const rows = (await repo('purchases').getAll()).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 200);
-    const goods = await repo('goods').getAll();
+  async purchases(params, user) {
+    const rows = (await repo('purchases').getAll({ restaurantId: user?.restaurantId })).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 200);
+    const goods = await repo('goods').getAll({ restaurantId: user?.restaurantId });
     const nameById = Object.fromEntries(goods.map((g) => [g.id, g.name]));
     return {
       title: 'Purchase History',
@@ -319,8 +321,8 @@ const BUNDLES = {
   sales: { title: 'Sales & Customers — Full Report', titleAr: 'المبيعات والعملاء — تقرير شامل', types: ['product-performance', 'order-history', 'customer-spending', 'loyalty', 'reservations'] },
 };
 
-async function settingsMeta() {
-  const s = (await repo('settings').getAll())[0] || {};
+async function settingsMeta(user) {
+  const s = await settingsService.get(user);
   return { restaurantName: s.restaurantName || 'Restaurant Management System', currency: s.currency || 'USD' };
 }
 
@@ -328,28 +330,28 @@ export const reportService = {
   types: () => Object.keys(REPORTS),
   bundles: () => Object.keys(BUNDLES),
 
-  async build(type, params = {}) {
+  async build(type, params = {}, user) {
     const fn = REPORTS[type];
     if (!fn) throw new HttpError(404, `Unknown report type "${type}". Available: ${Object.keys(REPORTS).join(', ')}`);
-    return fn(params);
+    return fn(params, user);
   },
 
   /** Build a multi-section bundle (e.g. all workers reports in one). */
-  async buildBundle(name, params = {}) {
+  async buildBundle(name, params = {}, user) {
     const def = BUNDLES[name];
     if (!def) throw new HttpError(404, `Unknown bundle "${name}". Available: ${Object.keys(BUNDLES).join(', ')}`);
     const isAr = params.lang === 'ar';
     const sections = [];
     for (const type of def.types) {
-      const spec = await this.build(type, params);
+      const spec = await this.build(type, params, user);
       sections.push({ title: (isAr && spec.titleAr) ? spec.titleAr : spec.title, columns: spec.columns, rows: spec.rows, totals: spec.totals, chart: spec.chart });
     }
     return { title: isAr ? def.titleAr : def.title, titleAr: def.titleAr, sections };
   },
 
-  async bundlePdf(name, params = {}) {
-    const { title, titleAr, sections } = await this.buildBundle(name, params);
-    const meta = await settingsMeta();
+  async bundlePdf(name, params = {}, user) {
+    const { title, titleAr, sections } = await this.buildBundle(name, params, user);
+    const meta = await settingsMeta(user);
     // SOTA: render via headless Chromium (proper Arabic shaping, bidi, RTL tables, font
     // fallback). Falls back to the pdfkit renderer if puppeteer isn't installed yet.
     const { renderReportPdfHtml, isPuppeteerMissing } = await loadHtmlReport();
@@ -364,15 +366,15 @@ export const reportService = {
     }
   },
 
-  async bundleXlsx(name, params = {}) {
-    const { title, titleAr, sections } = await this.buildBundle(name, params);
+  async bundleXlsx(name, params = {}, user) {
+    const { title, titleAr, sections } = await this.buildBundle(name, params, user);
     const { renderMultiReportXlsx } = await loadExcel();
     return renderMultiReportXlsx({ title, titleAr, sections, lang: params.lang, filename: params.filename });
   },
 
-  async pdf(type, params = {}) {
-    const spec = await this.build(type, params);
-    const meta = await settingsMeta();
+  async pdf(type, params = {}, user) {
+    const spec = await this.build(type, params, user);
+    const meta = await settingsMeta(user);
     const isAr = params.lang === 'ar';
     const subtitle = params.from ? `${isAr ? 'الفترة' : 'Range'}: ${params.from} → ${params.to || (isAr ? 'الآن' : 'now')}` : '';
     const title = isAr ? (spec.titleAr || spec.title) : spec.title;
@@ -390,8 +392,8 @@ export const reportService = {
     }
   },
 
-  async xlsx(type, params = {}) {
-    const spec = await this.build(type, params);
+  async xlsx(type, params = {}, user) {
+    const spec = await this.build(type, params, user);
     const { renderReportXlsx } = await loadExcel();
     return renderReportXlsx({ ...spec, sheetName: type, lang: params.lang, filename: params.filename });
   },

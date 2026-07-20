@@ -7,8 +7,8 @@ export const locationService = {
   ...base,
 
   /** Governorate → [areas], for cascading dropdowns. */
-  async tree() {
-    const rows = await repo('locations').getAll();
+  async tree(user) {
+    const rows = await repo('locations').getAll({ restaurantId: user?.restaurantId });
     const tree = {};
     for (const r of rows) {
       const g = (r.governorate || '').trim();

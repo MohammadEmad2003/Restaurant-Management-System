@@ -47,12 +47,24 @@ npm install
 npm run dev        # → http://localhost:5173
 ```
 
-Open **http://localhost:5173** and sign in:
+Open **http://localhost:5173** and sign in.
 
-| Role | Username | Password |
-|---|---|---|
-| 👑 Admin (full access) | `admin` | `admin123` |
-| 🧾 Cashier (POS + clients) | `cashier` | `cashier123` |
+### First-time setup (multi-tenant / licensing)
+
+The app is now organized around **Restaurants**, each with its own license and users.
+
+1. **Super Admin** — go to **http://localhost:5173/#/superadmin/login** and sign in:
+   | Role | Username | Password |
+   |---|---|---|
+   | 🛡️ Super Admin | `superadmin` | `superadmin123` |
+
+2. From the Super Admin Dashboard, **create a Restaurant**. The system automatically creates the restaurant, its license, activation token, admin account, expiration date, offline period, and device limits.
+
+3. Open **http://localhost:5173/#/login** and sign in with the restaurant admin credentials you just created. If the license is inactive, the Admin is prompted to enter the Activation Token.
+
+4. **Cashiers** sign in at **http://localhost:5173/#/login** with their username and password only. The backend validates the restaurant license transparently on every cashier login.
+
+> On a fresh install, the default Super Admin is created automatically. In production, change the default Super Admin password immediately.
 
 ### 3) Desktop app (optional, Electron)
 ```bash
@@ -115,9 +127,13 @@ Restaurant/
 
 ## 🧱 Tech & design
 
+- **Single Frontend + Single Backend** — the previously separate Super Admin apps are merged into the same codebase. Separation is enforced by authentication, roles, route guards, layouts, and permissions.
+- **Multi-tenant restaurant architecture** — every business record is scoped to a `restaurant_id`.
+- **Restaurant licensing** — each restaurant has one license (activation token, expiration, device limits, offline days, rolling validation window). Admins activate/renew the license; cashiers are blocked when it expires.
+- **Device-bound JWT** — every login registers the device and issues a JWT bound to user, restaurant, device, and fingerprint. Tokens are valid for 24 hours.
 - **Offline-first repository pattern** — services depend on an interface; a factory swaps Supabase ↔ local JSON by connectivity.
 - **Sync engine** — outbox queue, connectivity monitor, last-write-wins + field-merge + tombstones.
-- **JWT auth + server-side RBAC** (admin / cashier) mirrored in the UI permission matrix.
+- **JWT auth + server-side RBAC** (`SUPER_ADMIN` / `ADMIN` / `CASHIER`) mirrored in the UI permission matrix.
 - **Modern rounded design system** — soft shadows, generous radii, light/dark themes, violet brand, full RTL.
 - **Reporting** — `pdfkit` + `exceljs`, every major report exportable as PDF & Excel.
 

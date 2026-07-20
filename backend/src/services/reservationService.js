@@ -26,8 +26,8 @@ export const reservationService = {
   },
 
   /** Reservations grouped by day for the calendar view. */
-  async calendar({ from, to } = {}) {
-    let rows = await repo('reservations').getAll();
+  async calendar({ from, to } = {}, user) {
+    let rows = await repo('reservations').getAll({ restaurantId: user?.restaurantId });
     if (from) rows = rows.filter((r) => r.dateTime >= new Date(from).getTime());
     if (to) rows = rows.filter((r) => r.dateTime <= new Date(to).getTime());
     const byDay = {};
@@ -38,7 +38,7 @@ export const reservationService = {
     return byDay;
   },
 
-  waitlist: () => repo('reservations').getAll({ status: 'waitlist' }),
+  waitlist: (user) => repo('reservations').getAll({ status: 'waitlist', restaurantId: user?.restaurantId }),
 };
 
 export default reservationService;

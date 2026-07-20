@@ -39,13 +39,13 @@ export const salaryService = {
    * WITHOUT persisting anything. Merges any already-generated salary record so
    * manual bonuses/deductions show up. The admin reviews this before paying.
    */
-  async preview({ month } = {}) {
+  async preview({ month } = {}, user) {
     const m = month || new Date().toISOString().slice(0, 7);
     const [workers, attendance, existing, settings] = await Promise.all([
-      repo('workers').getAll(),
-      repo('attendance').getAll(),
-      repo('salaries').getAll({ month: m }),
-      settingsService.get(),
+      repo('workers').getAll({ restaurantId: user?.restaurantId }),
+      repo('attendance').getAll({ restaurantId: user?.restaurantId }),
+      repo('salaries').getAll({ month: m, restaurantId: user?.restaurantId }),
+      settingsService.get(user),
     ]);
     const monthAttendance = attendance.filter((a) => (a.date || '').startsWith(m));
     const byWorker = Object.fromEntries(existing.map((s) => [s.workerId, s]));
@@ -66,17 +66,17 @@ export const salaryService = {
   async generate({ month } = {}, user) {
     const m = month || new Date().toISOString().slice(0, 7);
     const [workers, attendance, existing, settings] = await Promise.all([
-      repo('workers').getAll(),
-      repo('attendance').getAll(),
-      repo('salaries').getAll({ month: m }),
-      settingsService.get(),
+      repo('workers').getAll({ restaurantId: user?.restaurantId }),
+      repo('attendance').getAll({ restaurantId: user?.restaurantId }),
+      repo('salaries').getAll({ month: m, restaurantId: user?.restaurantId }),
+      settingsService.get(user),
     ]);
     const monthAttendance = attendance.filter((a) => (a.date || '').startsWith(m));
     const created = [];
     for (const w of workers.filter((x) => x.status === 'active')) {
       if (existing.some((s) => s.workerId === w.id)) continue;
       const b = computeBreakdown(w, monthAttendance, settings);
-      const rec = await repo('salaries').create({ ...b, month: m, paid: false });
+      const rec = await repo('salaries').create({ ...b, month: m, paid: false, restaurantId: user?.restaurantId });
       created.push(rec);
     }
     await recordAudit(user, 'SALARY_GENERATED', 'salaries', null, { after: { month: m, count: created.length } });
@@ -103,7 +103,7 @@ export const salaryService = {
   async runMonthly({ month } = {}, user) {
     const m = month || new Date().toISOString().slice(0, 7);
     await this.generate({ month: m }, user);
-    const all = await repo('salaries').getAll({ month: m });
+    const all = await repo('salaries').getAll({ month: m, restaurantId: user?.restaurantId });
     const paid = [];
     for (const s of all) {
       if (!s.paid) paid.push(await this.markPaid(s.id, user));
@@ -115,17 +115,21 @@ export const salaryService = {
   async markPaid(id, user) {
     const salary = await repo('salaries').getById(id);
     if (!salary) throw new HttpError(404, 'salary not found');
+    if (user?.restaurantId && salary.restaurantId && salary.restaurantId !== user.restaurantId) {
+      throw new HttpError(404, 'salary not found');
+    }
 
     // Auto-deduct any pending cash advances before paying
-    const { deductedAmount } = await cashAdvanceService.deductFromSalary(salary.workerId, salary);
+    const { deductedAmount } = await cashAdvanceService.deductFromSalary(salary.workerId, salary, user);
 
     // Recalculate netPay after deduction, then mark paid
-    const updated = await repo('salaries').update(id, { paid: true, paidAt: Date.now() });
+    const updated = await repo('salaries').update(id, { paid: true, paidAt: Date.now(), restaurantId: salary.restaurantId });
     // salary becomes an expense
     await repo('expenses').create({
       type: 'salary', amount: updated.netPay,
       description: `Salary ${updated.month} — ${updated.workerName}${deductedAmount ? ` (advances deducted: ${deductedAmount})` : ''}`,
       refId: updated.workerId, date: new Date().toISOString().slice(0, 10),
+      restaurantId: user?.restaurantId,
     });
     await recordAudit(user, 'SALARY_PAID', 'salaries', id, { after: updated, advancesDeducted: deductedAmount });
     return updated;

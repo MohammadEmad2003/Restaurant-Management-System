@@ -6,8 +6,8 @@ import { goodsCheckService } from './goodsCheckService.js';
 const dayKey = (ts) => new Date(ts).toISOString().slice(0, 10);
 
 export const analyticsService = {
-  async sales() {
-    const orders = (await repo('orders').getAll()).filter((o) => o.status === 'completed');
+  async sales(user) {
+    const orders = (await repo('orders').getAll({ restaurantId: user?.restaurantId })).filter((o) => o.status === 'completed');
     const today = dayKey(Date.now());
     const last7 = Date.now() - 7 * 864e5;
     const last30 = Date.now() - 30 * 864e5;
@@ -50,11 +50,11 @@ export const analyticsService = {
     return Object.entries(buckets).map(([key, value]) => ({ key, value: +value.toFixed(2) }));
   },
 
-  async inventory() {
+  async inventory(user) {
     const [valuation, low, waste] = await Promise.all([
-      goodsService.valuation(),
-      goodsService.lowStock(),
-      goodsCheckService.wasteReport({}),
+      goodsService.valuation(user),
+      goodsService.lowStock(user),
+      goodsCheckService.wasteReport({}, user),
     ]);
     return {
       inventoryValue: valuation.totalValue,
@@ -65,9 +65,11 @@ export const analyticsService = {
     };
   },
 
-  async workers() {
+  async workers(user) {
     const [workers, attendance, orders] = await Promise.all([
-      repo('workers').getAll(), repo('attendance').getAll(), repo('orders').getAll(),
+      repo('workers').getAll({ restaurantId: user?.restaurantId }),
+      repo('attendance').getAll({ restaurantId: user?.restaurantId }),
+      repo('orders').getAll({ restaurantId: user?.restaurantId }),
     ]);
     const active = workers.filter((w) => w.status === 'active').length;
     const hoursByWorker = {};
@@ -90,9 +92,12 @@ export const analyticsService = {
    * (governorate · area). Orders snapshot the location at checkout; older orders
    * fall back to the linked client record. `from`/`to` bound the date range.
    */
-  async byLocation({ from, to } = {}) {
+  async byLocation({ from, to } = {}, user) {
     const [orders, products, goods, clients] = await Promise.all([
-      repo('orders').getAll(), repo('products').getAll(), repo('goods').getAll(), repo('clients').getAll(),
+      repo('orders').getAll({ restaurantId: user?.restaurantId }),
+      repo('products').getAll({ restaurantId: user?.restaurantId }),
+      repo('goods').getAll({ restaurantId: user?.restaurantId }),
+      repo('clients').getAll({ restaurantId: user?.restaurantId }),
     ]);
     const goodById = Object.fromEntries(goods.map((g) => [g.id, g]));
     const clientById = Object.fromEntries(clients.map((c) => [c.id, c]));
@@ -123,8 +128,8 @@ export const analyticsService = {
       .sort((a, b) => b.revenue - a.revenue);
   },
 
-  async customers() {
-    const clients = await repo('clients').getAll();
+  async customers(user) {
+    const clients = await repo('clients').getAll({ restaurantId: user?.restaurantId });
     const top = [...clients].sort((a, b) => (b.totalSpent || 0) - (a.totalSpent || 0)).slice(0, 5);
     const returning = clients.filter((c) => (c.visitCount || 0) > 1).length;
     return {
@@ -136,14 +141,14 @@ export const analyticsService = {
   },
 
   /** Everything the admin dashboard needs in one call. */
-  async dashboard() {
+  async dashboard(user) {
     const [sales, finance, inventory, workers, customers, locations] = await Promise.all([
-      this.sales(),
-      financeService.profit({ period: 'monthly' }),
-      this.inventory(),
-      this.workers(),
-      this.customers(),
-      this.byLocation(),
+      this.sales(user),
+      financeService.profit({ period: 'monthly' }, user),
+      this.inventory(user),
+      this.workers(user),
+      this.customers(user),
+      this.byLocation({}, user),
     ]);
     return { sales, finance, inventory, workers, customers, locations, generatedAt: Date.now() };
   },

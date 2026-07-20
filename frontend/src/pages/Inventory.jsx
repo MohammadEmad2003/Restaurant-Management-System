@@ -34,7 +34,7 @@ export default function Inventory() {
   const { t } = useTranslation();
   const lang = useUI((s) => s.lang);
   const notify = useUI((s) => s.notify);
-  const isAdmin = useAuth((s) => s.user?.role === 'admin');
+  const can = useAuth((s) => s.can);
   const { data, loading, refetch } = useFetch('/goods', []);
   const { data: val } = useFetch('/goods/valuation', []);
   const [purchase, setPurchase] = useState(null);
@@ -77,7 +77,7 @@ export default function Inventory() {
   return (
     <div className="fade-in">
       <PageHeader title={t('nav.inventory')} subtitle={t('inventory.goodsTracked', '{{count}} goods tracked', { count: data.length })}>
-        {isAdmin && <button className="btn btn--primary" onClick={() => { setIForm(blankItem); setAddOpen(true); }}><Plus size={16} /> {t('common.add')}</button>}
+        {can('admin') && <button className="btn btn--primary" onClick={() => { setIForm(blankItem); setAddOpen(true); }}><Plus size={16} /> {t('common.add')}</button>}
       </PageHeader>
       <div className="grid grid--stats" style={{ marginBottom: 18 }}>
         <Stat label={t('dashboard.inventoryValue')} value={money(val?.totalValue || 0)} icon={Boxes} color="linear-gradient(135deg,#06b6d4,#22d3ee)" />
@@ -94,7 +94,7 @@ export default function Inventory() {
             { key: 'minimumStockLevel', label: t('inventory.minStock', 'Min'), align: 'end', render: (v, r) => `${num(v)} ${r.unit}` },
             { key: 'purchasePrice', label: t('inventory.unitCost', 'Unit Cost'), align: 'end', render: (v) => money(v) },
             { key: 'id', label: t('common.status'), render: (_, r) => r.quantityAvailable <= r.minimumStockLevel ? <Badge kind="danger"><span className="dot" />{t('inventory.low', 'Low')}</Badge> : <Badge kind="success"><span className="dot" />{t('inventory.ok', 'OK')}</Badge> },
-            ...(isAdmin ? [{ key: '_act', label: t('common.actions'), render: (_, r) => <button className="btn btn--sm" onClick={() => { setPurchase(r); setPForm({ quantity: '', unitPrice: r.purchasePrice, supplierId: '' }); }}><PackagePlus size={14} /> {t('inventory.restock', 'Restock')}</button> }] : []),
+            ...(can('admin') ? [{ key: '_act', label: t('common.actions'), render: (_, r) => <button className="btn btn--sm" onClick={() => { setPurchase(r); setPForm({ quantity: '', unitPrice: r.purchasePrice, supplierId: '' }); }}><PackagePlus size={14} /> {t('inventory.restock', 'Restock')}</button> }] : []),
           ]}
           rows={paginatedGoods}
           pagination={{ currentPage: page, totalPages, onPageChange: setPage, pageSize, totalItems, onPageSizeChange: setPageSize }}

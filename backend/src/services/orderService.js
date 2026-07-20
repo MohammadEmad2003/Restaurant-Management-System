@@ -8,8 +8,8 @@ import { evaluateLoyaltyReward } from './loyaltyEngine.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-async function priceLines(lines) {
-  const products = await repo('products').getAll();
+async function priceLines(lines, user) {
+  const products = await repo('products').getAll({ restaurantId: user?.restaurantId });
   const byId = Object.fromEntries(products.map((p) => [p.id, p]));
   let total = 0;
   const priced = lines.map((l) => {
@@ -23,8 +23,11 @@ async function priceLines(lines) {
 }
 
 /** Deduct each product's recipe ingredients from inventory. */
-async function deductInventory(lines) {
-  const [products, goods] = await Promise.all([repo('products').getAll(), repo('goods').getAll()]);
+async function deductInventory(lines, user) {
+  const [products, goods] = await Promise.all([
+    repo('products').getAll({ restaurantId: user?.restaurantId }),
+    repo('goods').getAll({ restaurantId: user?.restaurantId }),
+  ]);
   const productById = Object.fromEntries(products.map((p) => [p.id, p]));
   const need = {}; // goodId → qty
   for (const l of lines) {
@@ -45,16 +48,19 @@ async function deductInventory(lines) {
 }
 
 export const orderService = {
-  list: (filter) => repo('orders').getAll(filter),
+  list: (filter, user) => repo('orders').getAll({ ...filter, restaurantId: user?.restaurantId }),
 
-  async get(id) {
+  async get(id, user) {
     const o = await repo('orders').getById(id);
     if (!o) throw new HttpError(404, 'order not found');
+    if (user?.restaurantId && o.restaurantId && o.restaurantId !== user.restaurantId) {
+      throw new HttpError(404, 'order not found');
+    }
     return o;
   },
 
   async create(data, user) {
-    const { priced, total } = await priceLines(data.products || []);
+    const { priced, total } = await priceLines(data.products || [], user);
 
     // Snapshot the customer's name + phone onto the order so the receipt and
     // history stay correct even if the client record later changes or is offline.
@@ -74,7 +80,7 @@ export const orderService = {
 
     // Delivery fee: applied to phone/delivery orders, waived for walk-ins. The
     // fee amount is controlled by the admin in Settings.
-    const settings = await settingsService.get();
+    const settings = await settingsService.get(user);
     const walkIn = !!data.walkIn;
     const isDelivery = !walkIn && (data.isDelivery ?? !!clientPhone);
     const deliveryFee = isDelivery ? +(settings.deliveryFee || 0) : 0;
@@ -99,6 +105,7 @@ export const orderService = {
       cashierName: data.cashierName || user?.name || null,
       orderDate: data.orderDate || Date.now(),
       status: data.status || 'completed',
+      restaurantId: user?.restaurantId,
     });
 
     let lowStock = [];
@@ -111,12 +118,12 @@ export const orderService = {
 
   /** Side effects when an order becomes completed. */
   async _onComplete(order, user) {
-    const lowStock = await deductInventory(order.products);
+    const lowStock = await deductInventory(order.products, user);
     // Note: completed orders are the source of truth for income — financeService
     // derives revenue directly from them, so no separate expense/income row is written here.
     // loyalty — automated engine evaluates order value, visit milestone, random reward
     if (order.clientId) {
-      const settings = await settingsService.get();
+      const settings = await settingsService.get(user);
       await evaluateLoyaltyReward(order, settings);
       // update totalSpent independently (engine handles points + visitCount)
       const client = await repo('clients').getById(order.clientId);
@@ -134,6 +141,7 @@ export const orderService = {
       status: 'new',
       priority: 'normal',
       startedAt: Date.now(),
+      restaurantId: user?.restaurantId,
     });
     return lowStock;
   },
@@ -141,13 +149,16 @@ export const orderService = {
   async update(id, patch, user) {
     const before = await repo('orders').getById(id);
     if (!before) throw new HttpError(404, 'order not found');
+    if (user?.restaurantId && before.restaurantId && before.restaurantId !== user.restaurantId) {
+      throw new HttpError(404, 'order not found');
+    }
     let next = { ...patch };
     if (patch.products) {
-      const { priced, total } = await priceLines(patch.products);
+      const { priced, total } = await priceLines(patch.products, user);
       next.products = priced;
       next.totalPrice = total;
     }
-    const updated = await repo('orders').update(id, next);
+    const updated = await repo('orders').update(id, { ...next, restaurantId: before.restaurantId });
     // transition into completed
     if (before.status !== 'completed' && updated.status === 'completed') {
       await this._onComplete(updated, user);
@@ -159,7 +170,10 @@ export const orderService = {
   async cancel(id, user) {
     const before = await repo('orders').getById(id);
     if (!before) throw new HttpError(404, 'order not found');
-    const updated = await repo('orders').update(id, { status: 'cancelled' });
+    if (user?.restaurantId && before.restaurantId && before.restaurantId !== user.restaurantId) {
+      throw new HttpError(404, 'order not found');
+    }
+    const updated = await repo('orders').update(id, { status: 'cancelled', restaurantId: before.restaurantId });
     await recordAudit(user, 'ORDER_CANCELLED', 'orders', id, { before, after: updated });
     return updated;
   },

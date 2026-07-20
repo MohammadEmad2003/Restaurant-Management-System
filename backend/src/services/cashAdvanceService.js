@@ -3,8 +3,8 @@ import { recordAudit } from '../middleware/audit.js';
 import { HttpError } from '../middleware/errorHandler.js';
 
 /** List cash advances with optional status/date filters. */
-async function list({ status, workerId, date } = {}) {
-  let items = await repo('cashAdvances').getAll();
+async function list({ status, workerId, date } = {}, user) {
+  let items = await repo('cashAdvances').getAll({ restaurantId: user?.restaurantId });
   if (status) items = items.filter((a) => a.status === status);
   if (workerId) items = items.filter((a) => a.workerId === workerId);
   if (date) items = items.filter((a) => (a.date || '').startsWith(date));
@@ -13,7 +13,7 @@ async function list({ status, workerId, date } = {}) {
 
 /** Create a new cash advance for a worker. */
 async function create(data, user) {
-  const existing = await repo('cashAdvances').getAll({ workerId: data.workerId, status: 'pending' });
+  const existing = await repo('cashAdvances').getAll({ workerId: data.workerId, status: 'pending', restaurantId: user?.restaurantId });
   const totalPending = existing.reduce((s, a) => s + (a.amount || 0), 0);
 
   const advance = await repo('cashAdvances').create({
@@ -25,6 +25,7 @@ async function create(data, user) {
     status: 'pending',
     repaymentMethod: data.repaymentMethod || 'salary-deduction',
     notes: data.notes || '',
+    restaurantId: user?.restaurantId,
   });
 
   await recordAudit(user, 'CASH_ADVANCE_CREATED', 'cashAdvances', advance.id, { after: advance, totalPending });
@@ -35,6 +36,9 @@ async function create(data, user) {
 async function update(id, patch, user) {
   const before = await repo('cashAdvances').getById(id);
   if (!before) throw new HttpError(404, 'Cash advance not found');
+  if (user?.restaurantId && before.restaurantId && before.restaurantId !== user.restaurantId) {
+    throw new HttpError(404, 'Cash advance not found');
+  }
 
   const updated = await repo('cashAdvances').update(id, {
     ...patch,
@@ -49,14 +53,17 @@ async function update(id, patch, user) {
 async function remove(id, user) {
   const before = await repo('cashAdvances').getById(id);
   if (!before) throw new HttpError(404, 'Cash advance not found');
+  if (user?.restaurantId && before.restaurantId && before.restaurantId !== user.restaurantId) {
+    throw new HttpError(404, 'Cash advance not found');
+  }
   const ok = await repo('cashAdvances').remove(id);
   await recordAudit(user, 'CASH_ADVANCE_DELETED', 'cashAdvances', id, { before });
   return ok;
 }
 
 /** Get all pending advances for a specific worker (used by payroll integration). */
-async function getPendingByWorker(workerId) {
-  const all = await repo('cashAdvances').getAll();
+async function getPendingByWorker(workerId, user) {
+  const all = await repo('cashAdvances').getAll({ restaurantId: user?.restaurantId });
   return all.filter((a) => a.workerId === workerId && a.status === 'pending' && a.repaymentMethod !== 'cash-reimbursement');
 }
 
@@ -65,8 +72,8 @@ async function getPendingByWorker(workerId) {
  * Called during salary generation/payment to auto-deduct outstanding advances.
  * Returns { deductedAmount, advancesMarkedDeducted }.
  */
-async function deductFromSalary(workerId, salaryRecord) {
-  const pending = await getPendingByWorker(workerId);
+async function deductFromSalary(workerId, salaryRecord, user) {
+  const pending = await getPendingByWorker(workerId, user);
   if (!pending.length) return { deductedAmount: 0, advancesMarkedDeducted: [] };
 
   const deductedAmount = pending.reduce((s, a) => s + (a.amount || 0), 0);

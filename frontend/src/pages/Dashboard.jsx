@@ -27,15 +27,15 @@ function ChartTooltip({ active, payload, label }) {
 export default function Dashboard() {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const can = useAuth((s) => s.can);
   const lang = useUI((s) => s.lang);
-  const isAdmin = user?.role === 'admin';
 
   // Hooks must run unconditionally on every render (Rules of Hooks), so they
   // stay above the role-based early return below.
   const { data, loading } = useFetch('/analytics/dashboard', []);
   const { data: orders } = useFetch('/orders', []);
 
-  if (!isAdmin) return <CashierHome />;
+  if (!can('admin')) return <CashierHome />;
   if (loading || !data) return <Spinner />;
 
   const { sales, finance, inventory, workers, customers, locations } = data;

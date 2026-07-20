@@ -12,11 +12,15 @@ export default function Login() {
   const { toggleLang, lang } = useUI();
   const [form, setForm] = useState({ username: 'admin', password: 'admin123' });
 
-  if (user) return <Navigate to="/" replace />;
+  if (user?.role === 'super_admin') return <Navigate to="/superadmin" replace />;
+  if (user?.role === 'admin' || user?.role === 'cashier') return <Navigate to="/" replace />;
 
   const submit = async (e) => {
     e.preventDefault();
-    if (await login(form.username, form.password)) nav('/');
+    const result = await login(form.username, form.password);
+    if (result?.requiresActivation || result?.success) {
+      nav('/');
+    }
   };
 
   const demo = (username, password) => setForm({ username, password });

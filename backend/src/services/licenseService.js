@@ -12,6 +12,8 @@ const DEFAULTS = {
   validationIntervalHours: 24,
   jwtExpiresInHours: 24,
   licenseDays: 30,
+  maxConcurrentCashierSessions: 1,
+  sessionTimeoutMinutes: 30,
 };
 
 export function generateActivationToken() {
@@ -35,6 +37,8 @@ export const licenseService = {
       maximumDevices: overrides.maximumDevices ?? DEFAULTS.maximumDevices,
       activeDevices: 0,
       validationIntervalHours: overrides.validationIntervalHours ?? DEFAULTS.validationIntervalHours,
+      maxConcurrentCashierSessions: overrides.maxConcurrentCashierSessions ?? DEFAULTS.maxConcurrentCashierSessions,
+      sessionTimeoutMinutes: overrides.sessionTimeoutMinutes ?? DEFAULTS.sessionTimeoutMinutes,
       status: 'inactive',
     });
     return { license, token };
@@ -72,12 +76,11 @@ export const licenseService = {
     if (license.status === 'revoked') throw new HttpError(403, 'License has been revoked');
     if (license.status === 'suspended') throw new HttpError(403, 'License is suspended');
 
-    const now = new Date().toISOString();
-    if (new Date(license.expirationDate) < new Date(now)) {
-      await store.update('licenses', license.id, { status: 'expired' });
-      throw new HttpError(403, 'License has expired');
-    }
-
+    // Activation always grants a fresh expiration window from now — this is
+    // what lets a restaurant re-activate after its previous period lapsed
+    // (super admin regenerates the token, admin re-enters it here), so the
+    // stale/past expirationDate on an 'expired' license must NOT block this;
+    // it's exactly the case this method exists to resolve.
     const updated = await store.update('licenses', license.id, {
       status: 'active',
       expirationDate: licenseExpirationDate(),
@@ -140,6 +143,18 @@ export const licenseService = {
     if (hours < 1) throw new HttpError(400, 'Validation interval must be at least 1 hour');
     const license = await this.requireLicense(restaurantId);
     return store.update('licenses', license.id, { validationIntervalHours: hours });
+  },
+
+  async changeMaxConcurrentCashierSessions(restaurantId, count) {
+    if (count < 1) throw new HttpError(400, 'Must allow at least 1 concurrent cashier session');
+    const license = await this.requireLicense(restaurantId);
+    return store.update('licenses', license.id, { maxConcurrentCashierSessions: count });
+  },
+
+  async changeSessionTimeoutMinutes(restaurantId, minutes) {
+    if (minutes < 1) throw new HttpError(400, 'Session timeout must be at least 1 minute');
+    const license = await this.requireLicense(restaurantId);
+    return store.update('licenses', license.id, { sessionTimeoutMinutes: minutes });
   },
 
   async validateLicense(restaurantId) {

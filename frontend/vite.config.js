@@ -7,6 +7,10 @@ export default defineConfig({
   base: './', // relative paths so the build also works inside Electron
   server: {
     port: 5173,
+    // Fail loudly if 5173 is taken instead of silently rebinding to another
+    // port — Electron's main.js hardcodes loadURL('http://localhost:5173'),
+    // so a silent port change there would leave it pointed at nothing.
+    strictPort: true,
     proxy: {
       '/api': { target: 'http://localhost:4000', changeOrigin: true },
     },

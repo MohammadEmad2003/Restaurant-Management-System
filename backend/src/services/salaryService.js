@@ -87,6 +87,9 @@ export const salaryService = {
   async adjust(id, patch, user) {
     const before = await repo('salaries').getById(id);
     if (!before) throw new HttpError(404, 'salary not found');
+    if (user?.restaurantId && before.restaurantId && before.restaurantId !== user.restaurantId) {
+      throw new HttpError(404, 'salary not found');
+    }
     if (before.paid) throw new HttpError(409, 'Salary already paid');
     const bonus = patch.bonus != null ? +patch.bonus : before.bonus || 0;
     const deductions = patch.deductions != null ? +patch.deductions : before.deductions || 0;

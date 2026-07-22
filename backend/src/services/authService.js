@@ -9,8 +9,9 @@ import { licenseService } from './licenseService.js';
 import { deviceService } from './deviceService.js';
 import { sessionService } from './sessionService.js';
 import { auditService } from './auditService.js';
-import { encrypt, signPayload } from '../utils/crypto.js';
-import { buildFingerprint } from '../utils/device.js';
+import { buildFingerprint, classifyDeviceType } from '../utils/device.js';
+import { withLock } from '../utils/lock.js';
+import { signOfflinePayload } from '../utils/offlineLicenseCrypto.js';
 
 const store = secureStore();
 
@@ -27,20 +28,24 @@ function normalizeRole(role) {
 }
 
 export const authService = {
-  async loginRestaurantUser({ username, password, fingerprint, deviceName, operatingSystem, ipAddress }) {
-    // Try to identify the restaurant from a previously registered device.
+  async loginRestaurantUser({ username, password, fingerprint, deviceName, operatingSystem, userAgent, ipAddress }) {
+    // Try to identify the restaurant from a previously registered device —
+    // this is ONLY a disambiguation hint for when multiple restaurants share
+    // the same username on the same device; it must never exclude a
+    // legitimate user in a DIFFERENT restaurant when the hinted restaurant
+    // has no matching username at all (e.g. a brand-new user just created
+    // for another restaurant, logging in from a browser that previously
+    // logged into a different restaurant).
     const allDevices = await store.findAll('devices');
     const knownDevice = allDevices.find((d) => d.fingerprint === fingerprint && d.status === 'active');
     const restaurantIdHint = knownDevice?.restaurantId;
 
-    let users = await store.findAll('users');
-    if (restaurantIdHint) {
-      users = users.filter((u) => u.restaurantId === restaurantIdHint);
+    const allUsers = await store.findAll('users');
+    let candidates = allUsers.filter((u) => u.username === username);
+    if (restaurantIdHint && candidates.some((u) => u.restaurantId === restaurantIdHint)) {
+      candidates = candidates.filter((u) => u.restaurantId === restaurantIdHint);
     }
 
-    // Find the user by username. If multiple restaurants share the same username,
-    // verify the password against each candidate and pick the matching one.
-    const candidates = users.filter((u) => u.username === username);
     let user = null;
     for (const candidate of candidates) {
       const ok = await verifyPassword(password, candidate.passwordHash || '');
@@ -64,15 +69,25 @@ export const authService = {
     const normalizedDeviceName = deviceName || 'Unknown Device';
     const normalizedOS = operatingSystem || 'Unknown';
 
-    // CASHIERs are never allowed to see or enter activation tokens. They are
-    // blocked until the admin has activated the restaurant license.
-    if (role === 'CASHIER') {
-      await licenseService.validateLicense(user.restaurantId); // will throw if invalid
+    // CASHIERs are hardware-restricted to desktop/laptop. The raw User-Agent
+    // header is the only trustworthy signal here — deviceName/operatingSystem
+    // are client-reported and spoofable.
+    if (role === 'CASHIER' && classifyDeviceType(userAgent) !== 'desktop') {
+      throw new HttpError(403, 'This account can only be used from a desktop or laptop computer.');
     }
 
-    // ADMIN can log in even when the license is inactive, but they only receive
-    // a flag telling the frontend to show the activation screen. No JWT yet.
-    if (role === 'ADMIN' && license.status === 'inactive') {
+    // A license still marked 'active' but past its expirationDate hasn't been
+    // flipped to 'expired' yet (that only happens inside validateLicense) — check
+    // the date directly so an admin is sent to the activation screen on the very
+    // first login after it lapses, instead of a hard rejection followed only later
+    // by the activation screen once something else has triggered the flip.
+    const isExpired = license.status === 'expired' || (license.status === 'active' && new Date(license.expirationDate) < new Date());
+
+    // ADMIN can log in even when the license was never activated, or has expired,
+    // but only receives a flag telling the frontend to show the activation screen.
+    // No JWT yet. CASHIERs never see this screen — they depend entirely on the
+    // admin's license and are hard-rejected below via validateLicense instead.
+    if (role === 'ADMIN' && (license.status === 'inactive' || isExpired)) {
       return {
         token: null,
         user: { id: user.id, username: user.username, role: 'admin', restaurantId: user.restaurantId, restaurantName: restaurant.restaurantName },
@@ -83,38 +98,64 @@ export const authService = {
       };
     }
 
-    // For every other case the license must be valid (active, not expired, not revoked/suspended).
-    await licenseService.validateLicense(user.restaurantId);
+    // Every remaining case (ADMIN with a valid license, or any CASHIER) must have
+    // an active, non-expired, non-revoked/suspended license — single call, shared
+    // by both roles (previously CASHIER also hit this redundantly above).
+    license = await licenseService.validateLicense(user.restaurantId);
 
-    const device = await deviceService.registerDevice({
-      restaurantId: user.restaurantId,
-      userId: user.id,
-      fingerprint,
-      deviceName: normalizedDeviceName,
-      operatingSystem: normalizedOS,
-    });
+    // Cashier-session-count-then-create and device-count-then-create are both
+    // check-then-act sequences racing other simultaneous logins for the SAME
+    // restaurant — serialize them per-restaurant so two concurrent logins can't
+    // both pass a check that only one of them should have passed.
+    const { device, token } = await withLock(user.restaurantId, async () => {
+      // Cashier sessions are capped per-restaurant by the license's configurable
+      // concurrency limit; check before minting a new session/device slot. The
+      // logging-in user's own existing session(s) are excluded from the count —
+      // re-authenticating as yourself (lost token, refreshed tab, same device)
+      // must not consume an additional slot against your own limit.
+      if (role === 'CASHIER') {
+        const activeCashierSessions = await sessionService.countActiveCashierSessions(user.restaurantId, user.id);
+        if (activeCashierSessions >= (license.maxConcurrentCashierSessions ?? 1)) {
+          throw new HttpError(403, 'The maximum number of active cashier sessions has been reached.');
+        }
+        // Supersede any of this user's own stale active sessions so re-login
+        // doesn't leave orphaned rows counted against future concurrency checks.
+        await sessionService.expireAllForUser(user.id);
+      }
 
-    await deviceService.updateValidationTimestamp(device.id);
+      const registeredDevice = await deviceService.registerDevice({
+        restaurantId: user.restaurantId,
+        userId: user.id,
+        fingerprint,
+        deviceName: normalizedDeviceName,
+        operatingSystem: normalizedOS,
+      });
 
-    const jwtId = randomUUID();
-    const tokenPayload = {
-      sub: user.id,
-      restaurantId: user.restaurantId,
-      role: role,
-      deviceId: device.id,
-      fingerprint,
-      jti: jwtId,
-      iat: Date.now(),
-      type: 'user',
-    };
-    const token = signAuthToken(tokenPayload);
+      await deviceService.updateValidationTimestamp(registeredDevice.id);
 
-    await sessionService.createSession({
-      jwtId,
-      userId: user.id,
-      userType: 'user',
-      restaurantId: user.restaurantId,
-      deviceId: device.id,
+      const newJwtId = randomUUID();
+      const tokenPayload = {
+        sub: user.id,
+        restaurantId: user.restaurantId,
+        role: role,
+        deviceId: registeredDevice.id,
+        fingerprint,
+        jti: newJwtId,
+        iat: Date.now(),
+        type: 'user',
+      };
+      const newToken = signAuthToken(tokenPayload);
+
+      await sessionService.createSession({
+        jwtId: newJwtId,
+        userId: user.id,
+        userType: 'user',
+        role,
+        restaurantId: user.restaurantId,
+        deviceId: registeredDevice.id,
+      });
+
+      return { device: registeredDevice, token: newToken, jwtId: newJwtId };
     });
 
     await auditService.log({
@@ -132,10 +173,16 @@ export const authService = {
       fingerprint,
       expirationDate: license.expirationDate,
       offlineDays: license.offlineDays,
+      validationIntervalHours: license.validationIntervalHours,
     });
 
     return {
       token,
+      // Present only when registerDevice minted a fresh one (new device, or a
+      // legacy device authenticating for the first time since this feature
+      // shipped) — never re-sent once a device already has one, and never
+      // stored server-side beyond its hash.
+      deviceSecret: device.plainDeviceSecret || null,
       user: {
         ...sanitize(user),
         role: role.toLowerCase(),
@@ -150,18 +197,23 @@ export const authService = {
         validationIntervalHours: license.validationIntervalHours,
       },
       offlineLicense,
-      requiresActivation: role === 'ADMIN' && license.status === 'inactive',
+      // Always false here — the requiresActivation branch above already
+      // returned earlier for the only case where this would be true.
+      requiresActivation: false,
     };
   },
 
   async activateRestaurantLicense({ username, password, token, fingerprint, deviceName, operatingSystem, ipAddress }) {
+    // Same disambiguation-only hint as loginRestaurantUser — must not exclude
+    // a legitimate user in a different restaurant (see comment there).
     const allDevices = await store.findAll('devices');
     const knownDevice = allDevices.find((d) => d.fingerprint === fingerprint && d.status === 'active');
-    let users = await store.findAll('users');
-    if (knownDevice?.restaurantId) {
-      users = users.filter((u) => u.restaurantId === knownDevice.restaurantId);
+    const restaurantIdHint = knownDevice?.restaurantId;
+    const allUsers = await store.findAll('users');
+    let candidates = allUsers.filter((u) => u.username === username);
+    if (restaurantIdHint && candidates.some((u) => u.restaurantId === restaurantIdHint)) {
+      candidates = candidates.filter((u) => u.restaurantId === restaurantIdHint);
     }
-    const candidates = users.filter((u) => u.username === username);
     let user = null;
     for (const candidate of candidates) {
       const ok = await verifyPassword(password, candidate.passwordHash || '');
@@ -230,8 +282,20 @@ export const authService = {
     return { ...sanitize(user), role: role.toLowerCase(), permissions: PERMISSIONS[role.toLowerCase()] || [] };
   },
 
-  generateOfflineLicense({ restaurantId, licenseId, deviceId, fingerprint, expirationDate, offlineDays }) {
-    const offlineUntil = new Date();
+  /**
+   * Builds a tamper-evident, asymmetrically-signed offline license. The
+   * client verifies `signature` against `payload` using the backend's public
+   * key (GET /license/public-key) — a symmetric HMAC can't be safely ported
+   * to the browser without exposing the secret, which would let anyone forge
+   * their own license. `validatedAt`/`validationIntervalHours` encode the
+   * rolling-validation window: within the interval, the client trusts this
+   * license outright; past it (but before offlineExpiration), the frontend
+   * requires reconnecting to get a fresh online validation rather than
+   * silently continuing to trust a stale one.
+   */
+  generateOfflineLicense({ restaurantId, licenseId, deviceId, fingerprint, expirationDate, offlineDays, validationIntervalHours }) {
+    const validatedAt = new Date();
+    const offlineUntil = new Date(validatedAt);
     offlineUntil.setDate(offlineUntil.getDate() + offlineDays);
     const payload = {
       restaurantId,
@@ -239,12 +303,18 @@ export const authService = {
       deviceId,
       fingerprint,
       expirationDate,
+      validatedAt: validatedAt.toISOString(),
+      validationIntervalHours: validationIntervalHours ?? 24,
       offlineExpiration: offlineUntil.toISOString(),
     };
+    // Sent alongside the object so the client verifies the signature against
+    // this EXACT string, never re-serializing the object itself (which could
+    // silently disagree on key order/whitespace between environments).
+    const payloadString = JSON.stringify(payload);
     return {
       ...payload,
-      signature: signPayload(payload),
-      encrypted: encrypt(JSON.stringify(payload)),
+      payload: payloadString,
+      signature: signOfflinePayload(payloadString),
     };
   },
 };

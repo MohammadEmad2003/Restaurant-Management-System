@@ -21,7 +21,9 @@ function createWindow() {
   });
 
   if (isDev) {
-    win.loadURL('http://localhost:5173');
+    win.loadURL('http://localhost:5173').catch((err) => {
+      console.error('Dev server unreachable on http://localhost:5173 — is "npm run dev" running?', err.message);
+    });
   } else {
     win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }

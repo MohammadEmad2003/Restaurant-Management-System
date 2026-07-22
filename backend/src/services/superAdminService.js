@@ -1,6 +1,7 @@
 import { secureStore } from '../repositories/secureStore.js';
 import { hashPassword } from '../utils/hash.js';
 import { licenseService } from './licenseService.js';
+import { sessionService } from './sessionService.js';
 import { newId } from '../utils/ids.js';
 import { HttpError } from '../middleware/errorHandler.js';
 
@@ -26,7 +27,11 @@ export const superAdminService = {
   },
 
   async createRestaurant({ restaurantName, adminUsername, adminPassword, adminOverrides = {}, licenseOverrides = {} }) {
-    const restaurant = await store.create('restaurants', { restaurantName, status: 'active' });
+    const name = (restaurantName || '').trim();
+    const all = await store.findAll('restaurants');
+    const dup = all.some((r) => r.status !== 'deleted' && r.restaurantName.trim().toLowerCase() === name.toLowerCase());
+    if (dup) throw new HttpError(409, 'A restaurant with this name already exists');
+    const restaurant = await store.create('restaurants', { restaurantName: name, status: 'active' });
     const { license, token } = await licenseService.createLicense(restaurant.id, licenseOverrides);
     const admin = await store.create('users', {
       restaurantId: restaurant.id,
@@ -92,7 +97,13 @@ export const superAdminService = {
   },
 
   async suspendRestaurantUser(userId) {
-    return store.update('users', userId, { status: 'suspended' });
+    const user = await store.update('users', userId, { status: 'suspended' });
+    await sessionService.expireAllForUser(userId);
+    return user;
+  },
+
+  async activateRestaurantUser(userId) {
+    return store.update('users', userId, { status: 'active' });
   },
 
   async deleteRestaurantUser(userId) {

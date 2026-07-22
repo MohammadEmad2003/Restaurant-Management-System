@@ -30,4 +30,17 @@ function parseOS(ua) {
   return 'Unknown';
 }
 
-export default { buildFingerprint, normalizeDeviceInfo };
+/**
+ * Coarse device-category classification for the CASHIER desktop/laptop-only
+ * restriction. Tablet check must come before the generic mobile check since
+ * Android tablets also match /Android/ but (unlike Android phones) omit the
+ * "Mobile" token from their User-Agent.
+ */
+export function classifyDeviceType(ua = '') {
+  const s = ua || '';
+  if (/iPad/i.test(s) || /Tablet/i.test(s) || (/Android/i.test(s) && !/Mobile/i.test(s))) return 'tablet';
+  if (/Mobi|iPhone|iPod|Android/i.test(s)) return 'mobile';
+  return 'desktop';
+}
+
+export default { buildFingerprint, normalizeDeviceInfo, classifyDeviceType };

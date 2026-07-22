@@ -9,12 +9,13 @@ import { recordAudit } from '../middleware/audit.js';
  *
  * Returns the total points earned and an array of reason strings.
  */
-export async function evaluateLoyaltyReward(order, settings) {
+export async function evaluateLoyaltyReward(order, settings, user) {
   const { clientId } = order;
   if (!clientId) return { points: 0, reasons: [] };
 
   const client = await repo('clients').getById(clientId);
   if (!client) return { points: 0, reasons: [] };
+  if (user?.restaurantId && client.restaurantId !== user.restaurantId) return { points: 0, reasons: [] };
 
   let totalPoints = 0;
   const reasons = [];
@@ -57,6 +58,7 @@ export async function evaluateLoyaltyReward(order, settings) {
       reasons,
       orderId: order.id,
       date: new Date().toISOString().slice(0, 10),
+      restaurantId: client.restaurantId,
     });
     await recordAudit(
       { id: order.cashierId || 'system' },

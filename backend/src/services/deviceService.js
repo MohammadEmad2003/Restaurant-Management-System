@@ -2,10 +2,14 @@ import { secureStore } from '../repositories/secureStore.js';
 import { newId } from '../utils/ids.js';
 import { HttpError } from '../middleware/errorHandler.js';
 import { licenseService } from './licenseService.js';
+import { generateDeviceSecret, hashDeviceSecret, validateDeviceSecret } from '../utils/deviceSecret.js';
 
 const store = secureStore();
 
 export const deviceService = {
+  // NOTE: the device/session concurrency limits checked here are only race-free
+  // because the caller (authService.loginRestaurantUser) wraps this whole call
+  // in withLock(restaurantId, ...) — do not call this outside that lock.
   async registerDevice({ restaurantId, userId, fingerprint, deviceName, operatingSystem }) {
     const license = await licenseService.requireLicense(restaurantId);
 
@@ -14,12 +18,25 @@ export const deviceService = {
     const existing = await store.findOne('devices', { restaurantId, fingerprint });
     if (existing && existing.status === 'active') {
       await this.updateValidationTimestamp(existing.id);
-      return existing;
+      // registerDevice() only runs on a fresh, just-verified username+password
+      // login (never on ordinary token-based requests) — every such login
+      // rotates the secret so the browsing context that just authenticated
+      // always ends up with one that actually matches. Without this, a device
+      // whose fingerprint is already secreted but whose storage lost the
+      // secret (cleared localStorage, a different browser profile, a private
+      // window) would log in "successfully" yet be permanently locked out of
+      // every subsequent request with no recovery short of an admin resetting
+      // the device.
+      return this._issueSecret(existing);
     }
     if (existing) {
+      if (existing.status === 'revoked') {
+        throw new HttpError(403, 'This device has been revoked. Contact your administrator.');
+      }
       await store.update('devices', existing.id, { status: 'active', userId });
       await this.updateValidationTimestamp(existing.id);
-      return store.findOne('devices', { id: existing.id });
+      const reactivated = await store.findOne('devices', { id: existing.id });
+      return this._issueSecret(reactivated);
     }
 
     await licenseService.refreshActiveDevices(restaurantId);
@@ -42,8 +59,19 @@ export const deviceService = {
       status: 'active',
     });
     await licenseService.refreshActiveDevices(restaurantId);
-    return device;
+    return this._issueSecret(device);
   },
+
+  /** Mints a fresh device-binding secret, stores only its hash, and returns
+   * the plaintext once on the device object for the caller to relay to the
+   * client — it is never persisted or returned again afterward. */
+  async _issueSecret(device) {
+    const secret = generateDeviceSecret();
+    const updated = await store.update('devices', device.id, { deviceSecretHash: hashDeviceSecret(secret) });
+    return { ...updated, plainDeviceSecret: secret };
+  },
+
+  validateDeviceSecret,
 
   async getDevice(id) {
     return store.findOne('devices', { id });

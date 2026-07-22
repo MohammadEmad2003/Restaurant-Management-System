@@ -8,6 +8,7 @@ import { logger } from './utils/logger.js';
 import routes from './routes/index.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { syncEngine } from './sync/syncEngine.js';
+import { sessionSweep } from './sessions/sessionSweep.js';
 
 const app = express();
 
@@ -38,6 +39,9 @@ async function start() {
 
   // Boot the offline-first sync engine (no-op until Supabase configured).
   syncEngine.start();
+
+  // Boot the idle-session sweep (releases abandoned cashier slots).
+  sessionSweep.start();
 
   const server = app.listen(config.port, () => {
     logger.success(`Backend listening on http://localhost:${config.port}  (mode: ${config.persistenceMode})`);

@@ -65,6 +65,23 @@ function ensureSchema(pool) {
         updated_at timestamptz not null default now()
       );
 
+      -- Case-insensitive/trimmed uniqueness; partial so a soft-deleted
+      -- restaurant's name can be reused by a new one. Wrapped so that an
+      -- installation with pre-existing duplicate names (from before this
+      -- constraint existed) doesn't fail the whole schema bootstrap and get
+      -- silently kicked to the local-JSON fallback — the app-level check in
+      -- superAdminService.createRestaurant still guards new creates either
+      -- way; this index only closes the race-condition window once any
+      -- existing duplicates are cleaned up and the server restarts.
+      do $$
+      begin
+        create unique index if not exists uq_restaurants_name_ci
+          on restaurants (lower(trim(restaurant_name)))
+          where status <> 'deleted';
+      exception when others then
+        raise notice 'Skipping uq_restaurants_name_ci (existing duplicate restaurant names?): %', sqlerrm;
+      end $$;
+
       create table if not exists users (
         id uuid primary key default gen_random_uuid(),
         restaurant_id uuid not null references restaurants(id) on delete cascade,
@@ -96,6 +113,8 @@ function ensureSchema(pool) {
         maximum_devices integer not null default 1,
         active_devices integer not null default 0,
         validation_interval_hours integer not null default 24,
+        max_concurrent_cashier_sessions integer not null default 1,
+        session_timeout_minutes integer not null default 30,
         status text not null default 'inactive' check (status in ('active', 'inactive', 'expired', 'revoked', 'suspended')),
         created_at timestamptz not null default now(),
         updated_at timestamptz not null default now()
@@ -112,6 +131,7 @@ function ensureSchema(pool) {
         activation_date timestamptz not null default now(),
         last_online timestamptz not null default now(),
         last_online_validation_at timestamptz not null default now(),
+        device_secret_hash text,
         status text not null default 'active' check (status in ('active', 'revoked', 'reset')),
         created_at timestamptz not null default now(),
         updated_at timestamptz not null default now()
@@ -131,6 +151,13 @@ function ensureSchema(pool) {
         updated_at timestamptz not null default now()
       );
 
+      -- Denormalized role (cheap concurrency counting) + heartbeat timestamp
+      -- (idle-timeout sweep) for the cashier concurrent-session limit.
+      alter table login_sessions add column if not exists role text;
+      alter table login_sessions add column if not exists last_seen_at timestamptz not null default now();
+      create index if not exists idx_login_sessions_restaurant_role_status
+        on login_sessions (restaurant_id, role, status);
+
       create table if not exists audit_logs (
         id uuid primary key default gen_random_uuid(),
         user_id uuid,
@@ -148,6 +175,11 @@ function ensureSchema(pool) {
       alter table audit_logs add column if not exists created_at timestamptz not null default now();
       alter table audit_logs add column if not exists updated_at timestamptz not null default now();
       alter table users add column if not exists legacy_worker_id text;
+      alter table licenses add column if not exists max_concurrent_cashier_sessions integer not null default 1;
+      alter table licenses add column if not exists session_timeout_minutes integer not null default 30;
+      alter table login_sessions add column if not exists role text;
+      alter table login_sessions add column if not exists last_seen_at timestamptz not null default now();
+      alter table devices add column if not exists device_secret_hash text;
 
       create index if not exists idx_audit_logs_restaurant on audit_logs (restaurant_id);
       create index if not exists idx_audit_logs_user on audit_logs (user_id);

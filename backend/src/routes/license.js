@@ -7,9 +7,16 @@ import { licenseService } from '../services/licenseService.js';
 import { deviceService } from '../services/deviceService.js';
 import { auditService } from '../services/auditService.js';
 import { buildFingerprint } from '../utils/device.js';
+import { getPublicKeySpkiBase64 } from '../utils/offlineLicenseCrypto.js';
 
 const router = Router();
 const h = asyncHandler;
+
+// Unauthenticated by design — it's a public key, safe to expose. The frontend
+// fetches it to verify offline-license signatures via Web Crypto.
+router.get('/public-key', (req, res) => {
+  res.json({ publicKey: getPublicKeySpkiBase64(), algorithm: 'ECDSA-P256-SHA256' });
+});
 
 router.post('/activate', h(async (req, res) => {
   const { username, password, token, deviceName, operatingSystem } = req.body;

@@ -19,7 +19,7 @@ const TABS = [
 export default function SuperAdminDashboard() {
   const { user, logout } = useAuth();
   const [tab, setTab] = useState('restaurants');
-  const [data, setData] = useState({ restaurants: [], users: [], usersRestaurantId: '', licenses: {}, licensesRestaurantId: '', devices: [], devicesRestaurantId: '', sessions: [], audit: [] });
+  const [data, setData] = useState({ restaurants: [], users: [], usersRestaurantId: '', licenses: {}, licensesRestaurantId: '', devices: [], devicesRestaurantId: '', sessions: [], sessionsRestaurantId: '', activeSessions: [], audit: [] });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState('success');
@@ -93,14 +93,23 @@ export default function SuperAdminDashboard() {
     } catch (e) { notify('Failed to load devices', 'danger'); }
   };
 
-  const action = async (method, path, success) => {
+  const loadActiveSessions = async (restaurantId) => {
     try {
-      await api[method](path);
+      const activeSessions = await api.get(`/superadmin/restaurants/${restaurantId}/sessions/active`).then((r) => r.data);
+      setData((d) => ({ ...d, activeSessions, sessionsRestaurantId: restaurantId }));
+    } catch (e) { notify('Failed to load sessions', 'danger'); }
+  };
+
+  const action = async (method, path, success, body) => {
+    try {
+      if (method === 'get' || body === undefined) await api[method](path);
+      else await api[method](path, body);
       notify(success);
       await fetchAll();
       if (tab === 'users' && data.usersRestaurantId) await loadRestaurantUsers(data.usersRestaurantId);
       if (tab === 'licenses' && data.licensesRestaurantId) await loadLicense(data.licensesRestaurantId);
       if (tab === 'devices' && data.devicesRestaurantId) await loadDevices(data.devicesRestaurantId);
+      if (tab === 'sessions' && data.sessionsRestaurantId) await loadActiveSessions(data.sessionsRestaurantId);
     } catch (e) { notify(e.response?.data?.error || 'Action failed', 'danger'); }
   };
 
@@ -175,7 +184,11 @@ export default function SuperAdminDashboard() {
                   <div key={u.id} className="card" style={{ padding: 16 }}>
                     <div style={{ fontWeight: 700 }}>{u.username}</div>
                     <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>{u.role} · {u.status}</div>
-                    <button className="btn btn--danger btn--sm" onClick={() => action('patch', `/superadmin/users/${u.id}/suspend`, 'Suspended')}>Suspend</button>
+                    {u.status === 'suspended' ? (
+                      <button className="btn btn--sm" onClick={() => action('patch', `/superadmin/users/${u.id}/activate`, 'Activated')}>Activate</button>
+                    ) : (
+                      <button className="btn btn--danger btn--sm" onClick={() => action('patch', `/superadmin/users/${u.id}/suspend`, 'Suspended')}>Suspend</button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -203,13 +216,21 @@ export default function SuperAdminDashboard() {
                       <span className="badge">Expires: {new Date(lic.expirationDate).toLocaleDateString()}</span>
                       <span className="badge">Devices: {lic.activeDevices}/{lic.maximumDevices}</span>
                       <span className="badge">Validation: {lic.validationIntervalHours}h</span>
+                      <span className="badge">Max Cashier Sessions: {lic.maxConcurrentCashierSessions ?? 1}</span>
+                      <span className="badge">Session Timeout: {lic.sessionTimeoutMinutes ?? 30}m</span>
                     </div>
-                    <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                    <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
                       <button className="btn btn--sm" onClick={() => { navigator.clipboard.writeText(lic.activationToken); notify('Token copied'); }}>Copy Token</button>
                       <button className="btn btn--sm" onClick={() => action('post', `/superadmin/licenses/${lic.restaurantId}/regenerate-token`, 'Token regenerated')}>Regenerate</button>
                       <button className="btn btn--sm" onClick={() => action('post', `/superadmin/licenses/${lic.restaurantId}/renew`, 'Renewed')}>Renew</button>
                       <button className="btn btn--danger btn--sm" onClick={() => action('patch', `/superadmin/licenses/${lic.restaurantId}/revoke`, 'Revoked')}>Revoke</button>
                     </div>
+                    <CashierSessionSettings
+                      key={lic.id}
+                      lic={lic}
+                      onSaveMax={(count) => action('patch', `/superadmin/licenses/${lic.restaurantId}/max-concurrent-cashiers`, 'Max cashier sessions updated', { count })}
+                      onSaveTimeout={(minutes) => action('patch', `/superadmin/licenses/${lic.restaurantId}/session-timeout`, 'Session timeout updated', { minutes })}
+                    />
                   </div>
                 );
               })()}
@@ -244,16 +265,40 @@ export default function SuperAdminDashboard() {
 
           {tab === 'sessions' && (
             <div>
-              <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 16 }}>Sessions</h2>
-              {data.sessions.slice(0, 50).map((s) => (
-                <div key={s.id} className="card" style={{ padding: 12, marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{s.userType}</div>
-                    <div className="muted" style={{ fontSize: 12 }}>{new Date(s.loginTime).toLocaleString()} · {s.status}</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <h2 style={{ fontSize: 20, fontWeight: 800 }}>Sessions</h2>
+                {data.sessionsRestaurantId && (
+                  <button className="btn btn--danger btn--sm" onClick={() => action('post', `/superadmin/restaurants/${data.sessionsRestaurantId}/force-logout-cashiers`, 'All cashiers logged out')}>Force Logout All Cashiers</button>
+                )}
+              </div>
+              <div className="field" style={{ maxWidth: 360, marginBottom: 16 }}>
+                <label>Restaurant (active sessions + controls)</label>
+                <select className="select" value={data.sessionsRestaurantId || ''} onChange={(e) => { const id = e.target.value; if (id) loadActiveSessions(id); else setData((d) => ({ ...d, sessionsRestaurantId: '', activeSessions: [] })); }}>
+                  <option value="">All (read-only overview)</option>
+                  {data.restaurants.map((r) => <option key={r.id} value={r.id}>{r.restaurantName}</option>)}
+                </select>
+              </div>
+              {data.sessionsRestaurantId ? (
+                data.activeSessions.map((s) => (
+                  <div key={s.id} className="card" style={{ padding: 12, marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{s.userType}{s.role ? ` · ${s.role}` : ''}</div>
+                      <div className="muted" style={{ fontSize: 12 }}>{new Date(s.loginTime).toLocaleString()} · {s.status}</div>
+                    </div>
+                    <button className="btn btn--danger btn--sm" onClick={() => action('patch', `/superadmin/sessions/${s.id}/terminate`, 'Session terminated')}>Terminate</button>
                   </div>
-                  <span className={`badge badge--${s.status === 'active' ? 'success' : 'muted'}`}>{s.status}</span>
-                </div>
-              ))}
+                ))
+              ) : (
+                data.sessions.slice(0, 50).map((s) => (
+                  <div key={s.id} className="card" style={{ padding: 12, marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{s.userType}</div>
+                      <div className="muted" style={{ fontSize: 12 }}>{new Date(s.loginTime).toLocaleString()} · {s.status}</div>
+                    </div>
+                    <span className={`badge badge--${s.status === 'active' ? 'success' : 'muted'}`}>{s.status}</span>
+                  </div>
+                ))
+              )}
             </div>
           )}
 
@@ -292,6 +337,8 @@ function CreateRestaurantForm({ onClose, onCreate }) {
     maxDevices: 2,
     offlineDays: 7,
     validationIntervalHours: 24,
+    maxConcurrentCashierSessions: 1,
+    sessionTimeoutMinutes: 30,
   });
   const [submitting, setSubmitting] = useState(false);
 
@@ -307,6 +354,8 @@ function CreateRestaurantForm({ onClose, onCreate }) {
         maximumDevices: form.maxDevices,
         offlineDays: form.offlineDays,
         validationIntervalHours: form.validationIntervalHours,
+        maxConcurrentCashierSessions: form.maxConcurrentCashierSessions,
+        sessionTimeoutMinutes: form.sessionTimeoutMinutes,
       },
     }); } finally { setSubmitting(false); }
   };
@@ -320,10 +369,32 @@ function CreateRestaurantForm({ onClose, onCreate }) {
       <div className="field"><label>Max Devices</label><input className="input" type="number" min={1} value={form.maxDevices} onChange={(e) => setForm({ ...form, maxDevices: Number(e.target.value) })} /></div>
       <div className="field"><label>Offline Days</label><input className="input" type="number" min={1} value={form.offlineDays} onChange={(e) => setForm({ ...form, offlineDays: Number(e.target.value) })} /></div>
       <div className="field"><label>Validation Interval (hours)</label><input className="input" type="number" min={1} value={form.validationIntervalHours} onChange={(e) => setForm({ ...form, validationIntervalHours: Number(e.target.value) })} /></div>
+      <div className="field"><label>Max Concurrent Cashier Sessions</label><input className="input" type="number" min={1} value={form.maxConcurrentCashierSessions} onChange={(e) => setForm({ ...form, maxConcurrentCashierSessions: Number(e.target.value) })} /></div>
+      <div className="field"><label>Session Timeout (minutes)</label><input className="input" type="number" min={1} value={form.sessionTimeoutMinutes} onChange={(e) => setForm({ ...form, sessionTimeoutMinutes: Number(e.target.value) })} /></div>
       <div className="row" style={{ gap: 10, justifyContent: 'flex-end', marginTop: 20 }}>
         <button className="btn btn--ghost" onClick={onClose}>Cancel</button>
         <button className="btn btn--primary" disabled={submitting} onClick={submit}>Create</button>
       </div>
+    </div>
+  );
+}
+
+function CashierSessionSettings({ lic, onSaveMax, onSaveTimeout }) {
+  const [maxSessions, setMaxSessions] = useState(lic.maxConcurrentCashierSessions ?? 1);
+  const [timeoutMinutes, setTimeoutMinutes] = useState(lic.sessionTimeoutMinutes ?? 30);
+
+  return (
+    <div className="row" style={{ gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+      <div className="field" style={{ margin: 0 }}>
+        <label>Max Concurrent Cashier Sessions</label>
+        <input className="input" type="number" min={1} value={maxSessions} onChange={(e) => setMaxSessions(Number(e.target.value))} style={{ width: 100 }} />
+      </div>
+      <button className="btn btn--sm" onClick={() => onSaveMax(maxSessions)}>Save</button>
+      <div className="field" style={{ margin: 0 }}>
+        <label>Session Timeout (minutes)</label>
+        <input className="input" type="number" min={1} value={timeoutMinutes} onChange={(e) => setTimeoutMinutes(Number(e.target.value))} style={{ width: 100 }} />
+      </div>
+      <button className="btn btn--sm" onClick={() => onSaveTimeout(timeoutMinutes)}>Save</button>
     </div>
   );
 }

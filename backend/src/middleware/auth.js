@@ -3,6 +3,7 @@ import { config } from '../config/index.js';
 import { HttpError } from './errorHandler.js';
 import { secureStore } from '../repositories/secureStore.js';
 import { deviceService } from '../services/deviceService.js';
+import { sessionService } from '../services/sessionService.js';
 import { buildFingerprint } from '../utils/device.js';
 
 /** Verifies the Bearer JWT and attaches req.user = { sub, role, name, restaurantId, deviceId, fingerprint }. */
@@ -44,6 +45,16 @@ export async function requireDeviceBound(req, res, next) {
     }
     if (device.fingerprint !== fingerprint) {
       return res.status(401).json({ error: 'Device fingerprint mismatch' });
+    }
+    if (!deviceService.validateDeviceSecret(device, req.headers['x-device-secret'])) {
+      return res.status(401).json({ error: 'Device secret mismatch' });
+    }
+    // Gives Force-Logout/Terminate-Session/suspend-on-user real teeth: without
+    // this, a still-cryptographically-valid JWT keeps working until its natural
+    // expiry even after the session row is marked logged_out/revoked/expired.
+    const session = await sessionService.getByJwtId(req.user.jti);
+    if (!session || session.status !== 'active') {
+      return res.status(401).json({ error: 'Session has been terminated' });
     }
     return next();
   } catch (err) {

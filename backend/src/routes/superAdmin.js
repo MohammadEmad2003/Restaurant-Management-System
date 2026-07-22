@@ -49,6 +49,7 @@ router.patch('/users/:userId', h(async (req, res) => {
   res.json({ ...user, passwordHash: undefined });
 }));
 router.patch('/users/:userId/suspend', h(async (req, res) => res.json(await superAdminService.suspendRestaurantUser(req.params.userId))));
+router.patch('/users/:userId/activate', h(async (req, res) => res.json(await superAdminService.activateRestaurantUser(req.params.userId))));
 router.delete('/users/:userId', h(async (req, res) => { await superAdminService.deleteRestaurantUser(req.params.userId); res.status(204).end(); }));
 
 /* ───────────── LICENSES ───────────── */
@@ -69,6 +70,8 @@ router.patch('/licenses/:restaurantId/revoke', h(async (req, res) => res.json(aw
 router.patch('/licenses/:restaurantId/offline-days', h(async (req, res) => res.json(await licenseService.changeOfflineDays(req.params.restaurantId, req.body.days))));
 router.patch('/licenses/:restaurantId/max-devices', h(async (req, res) => res.json(await licenseService.changeMaximumDevices(req.params.restaurantId, req.body.count))));
 router.patch('/licenses/:restaurantId/validation-interval', h(async (req, res) => res.json(await licenseService.changeValidationInterval(req.params.restaurantId, req.body.hours))));
+router.patch('/licenses/:restaurantId/max-concurrent-cashiers', h(async (req, res) => res.json(await licenseService.changeMaxConcurrentCashierSessions(req.params.restaurantId, req.body.count))));
+router.patch('/licenses/:restaurantId/session-timeout', h(async (req, res) => res.json(await licenseService.changeSessionTimeoutMinutes(req.params.restaurantId, req.body.minutes))));
 
 /* ───────────── DEVICES ───────────── */
 router.get('/restaurants/:id/devices', h(async (req, res) => res.json(await deviceService.listByRestaurant(req.params.id))));
@@ -86,6 +89,9 @@ router.patch('/devices/:deviceId/reset', h(async (req, res) => {
 /* ───────────── MONITORING ───────────── */
 router.get('/sessions', h(async (req, res) => res.json(await sessionService.list())));
 router.get('/restaurants/:id/sessions', h(async (req, res) => res.json(await sessionService.listByRestaurant(req.params.id))));
+router.get('/restaurants/:id/sessions/active', h(async (req, res) => res.json(await sessionService.list({ restaurantId: req.params.id, status: 'active' }))));
+router.patch('/sessions/:sessionId/terminate', h(async (req, res) => res.json(await sessionService.terminateSession(req.params.sessionId))));
+router.post('/restaurants/:id/force-logout-cashiers', h(async (req, res) => res.json(await sessionService.terminateAllCashierSessions(req.params.id))));
 router.get('/audit-logs', h(async (req, res) => res.json(await auditService.list(req.query))));
 router.get('/restaurants/:id/audit-logs', h(async (req, res) => res.json(await auditService.listByRestaurant(req.params.id))));
 

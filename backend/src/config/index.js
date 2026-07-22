@@ -15,6 +15,10 @@ export const config = {
   jwtExpiresInHours: Number(process.env.JWT_EXPIRES_IN_HOURS) || 24,
 
   persistenceMode: process.env.PERSISTENCE_MODE || 'auto', // auto | local | supabase
+
+  // How often the idle-session sweep runs (releases abandoned cashier slots).
+  sessionSweepIntervalMs: Number(process.env.SESSION_SWEEP_INTERVAL_MS) || 60000,
+
   sync: {
     enabled: process.env.SYNC_ENABLED !== 'false',
     intervalMs: Number(process.env.SYNC_INTERVAL_MS) || 15000,
@@ -27,8 +31,9 @@ export const config = {
     offlineRetryMs: Number(process.env.SYNC_OFFLINE_RETRY_MS) || 5000,
   },
 
-  // Absolute path to the local JSON store directory.
-  dataDir: path.resolve(__dirname, '..', 'data'),
+  // Absolute path to the local JSON store directory. Overridable (e.g. by
+  // tests, to avoid ever reading/writing the real dev data on disk).
+  dataDir: process.env.DATA_DIR || path.resolve(__dirname, '..', 'data'),
 
   supabase: {
     // Direct Postgres connection string, e.g.
@@ -39,6 +44,14 @@ export const config = {
     url: process.env.SUPABASE_URL || '',
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
     anonKey: process.env.SUPABASE_ANON_KEY || '',
+  },
+
+  // Asymmetric keypair for signing offline licenses (the client verifies with
+  // the public key only — a shared/symmetric secret can never be exposed to
+  // the frontend without letting anyone forge their own offline license).
+  offlineLicense: {
+    privateKeyPem: process.env.OFFLINE_LICENSE_PRIVATE_KEY || '',
+    publicKeyPem: process.env.OFFLINE_LICENSE_PUBLIC_KEY || '',
   },
 };
 

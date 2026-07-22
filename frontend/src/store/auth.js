@@ -1,9 +1,13 @@
 import { create } from 'zustand';
 import { api } from '../api/client.js';
 import { getFingerprint, getDeviceName, getOperatingSystem } from '../utils/fingerprint.js';
+import { evaluateOfflineAccess } from '../utils/offlineLicense.js';
 
 const stored = (() => {
   try { return JSON.parse(localStorage.getItem('user')); } catch { return null; }
+})();
+const storedOfflineLicense = (() => {
+  try { return JSON.parse(localStorage.getItem('offlineLicense')); } catch { return null; }
 })();
 
 export const useAuth = create((set, get) => ({
@@ -13,7 +17,18 @@ export const useAuth = create((set, get) => ({
   error: null,
   requiresActivation: false,
   pendingCredentials: null,
-  offlineLicense: null,
+  offlineLicense: storedOfflineLicense,
+  offlineStatus: null, // { tier: 'ok'|'stale'|'expired'|'blocked', reason }
+
+  /** Called when connectivity flips offline — decides whether the current
+   * session stays usable, must block for reconnection, or must log out,
+   * per the rolling-validation window encoded in the offline license. */
+  async checkOfflineAccess() {
+    if (!get().token) return;
+    const status = await evaluateOfflineAccess(get().offlineLicense);
+    set({ offlineStatus: status });
+    if (status.tier === 'expired') get().logout();
+  },
 
   async login(username, password) {
     set({ loading: true, error: null, requiresActivation: false });
@@ -40,6 +55,7 @@ export const useAuth = create((set, get) => ({
       if (data.token) {
         localStorage.setItem('token', data.token);
         localStorage.setItem('user', JSON.stringify(data.user));
+        if (data.deviceSecret) localStorage.setItem('deviceSecret', data.deviceSecret);
         if (data.offlineLicense) {
           localStorage.setItem('offlineLicense', JSON.stringify(data.offlineLicense));
         }
@@ -48,6 +64,7 @@ export const useAuth = create((set, get) => ({
           token: data.token,
           loading: false,
           offlineLicense: data.offlineLicense,
+          offlineStatus: null,
         });
       }
       return { success: true };
@@ -76,6 +93,7 @@ export const useAuth = create((set, get) => ({
       });
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
+      if (data.deviceSecret) localStorage.setItem('deviceSecret', data.deviceSecret);
       if (data.offlineLicense) {
         localStorage.setItem('offlineLicense', JSON.stringify(data.offlineLicense));
       }
@@ -86,6 +104,7 @@ export const useAuth = create((set, get) => ({
         requiresActivation: false,
         pendingCredentials: null,
         offlineLicense: data.offlineLicense,
+        offlineStatus: null,
       });
       return true;
     } catch (e) {
@@ -108,11 +127,17 @@ export const useAuth = create((set, get) => ({
     }
   },
 
+  async heartbeat() {
+    if (!get().token) return;
+    try { await api.post('/auth/heartbeat'); } catch { /* next heartbeat retries; logout is handled by the 401 interceptor */ }
+  },
+
   logout() {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    localStorage.removeItem('deviceSecret');
     localStorage.removeItem('offlineLicense');
-    set({ user: null, token: null, requiresActivation: false, pendingCredentials: null, offlineLicense: null });
+    set({ user: null, token: null, requiresActivation: false, pendingCredentials: null, offlineLicense: null, offlineStatus: null });
   },
 
   can: (action) => {

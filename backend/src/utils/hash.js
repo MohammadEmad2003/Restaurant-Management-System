@@ -6,7 +6,7 @@ export const verifyPassword = (plain, hash) => bcrypt.compare(plain, hash);
 /** Strip sensitive fields from any record before returning over the API. */
 export function sanitize(record) {
   if (!record) return record;
-  const { passwordHash, ...rest } = record;
+  const { passwordHash, deviceSecretHash, plainDeviceSecret, ...rest } = record;
   return rest;
 }
 

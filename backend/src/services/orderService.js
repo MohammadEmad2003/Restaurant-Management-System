@@ -70,6 +70,9 @@ export const orderService = {
     let area = data.area || '';
     if (data.clientId) {
       const client = await repo('clients').getById(data.clientId);
+      if (client && client.restaurantId !== user?.restaurantId) {
+        throw new HttpError(400, 'Invalid client');
+      }
       if (client) {
         clientName = client.name || clientName;
         clientPhone = (client.phoneNumbers || [])[0] || clientPhone;
@@ -124,10 +127,10 @@ export const orderService = {
     // loyalty — automated engine evaluates order value, visit milestone, random reward
     if (order.clientId) {
       const settings = await settingsService.get(user);
-      await evaluateLoyaltyReward(order, settings);
+      await evaluateLoyaltyReward(order, settings, user);
       // update totalSpent independently (engine handles points + visitCount)
       const client = await repo('clients').getById(order.clientId);
-      if (client) {
+      if (client && client.restaurantId === user?.restaurantId) {
         await repo('clients').update(client.id, {
           totalSpent: +((client.totalSpent || 0) + order.totalPrice).toFixed(2),
         });

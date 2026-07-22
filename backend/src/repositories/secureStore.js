@@ -3,6 +3,7 @@ import { getDb } from '../config/database.js';
 import { localStore } from './localStore.js';
 import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
+import { HttpError } from '../middleware/errorHandler.js';
 
 const COLLECTIONS = ['restaurants', 'users', 'super_admins', 'licenses', 'devices', 'login_sessions', 'audit_logs'];
 
@@ -41,7 +42,17 @@ export function secureStore() {
       const now = new Date().toISOString();
       const record = { id: data.id || randomUUID(), ...data, createdAt: now, updatedAt: now };
       if (_mode === 'postgres') {
-        const row = await pgInsert(table, record);
+        let row;
+        try {
+          row = await pgInsert(table, record);
+        } catch (err) {
+          // 23505 = unique_violation — surface as a clean 409 instead of a raw 500,
+          // covering both the pre-existing username-uniqueness constraint and the
+          // new case-insensitive restaurant-name index (races the app-level check
+          // in superAdminService.createRestaurant can't fully close on its own).
+          if (err.code === '23505') throw new HttpError(409, 'A record with this value already exists');
+          throw err;
+        }
         return rowToObject(row);
       }
       return localCreate(table, record);

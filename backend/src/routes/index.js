@@ -69,6 +69,9 @@ router.post('/auth/login', authRateLimit(), h(async (req, res) => {
     fingerprint: fp,
     deviceName,
     operatingSystem,
+    // Raw header, not the client-reported deviceName/operatingSystem, since
+    // those are spoofable — the device-type restriction relies on this.
+    userAgent: req.headers['user-agent'],
     ipAddress: req.ip,
   });
   res.json(result);
@@ -83,6 +86,12 @@ router.post('/auth/login/superadmin', authRateLimit(), h(async (req, res) => {
 router.get('/auth/me', auth, h(async (req, res) => res.json(await authService.me(req.user.sub, req.user.type))));
 router.post('/auth/logout', auth, h(async (req, res) => {
   if (req.user?.jti) await sessionService.logoutSession(req.user.jti);
+  res.json({ ok: true });
+}));
+// Keeps a session's lastSeenAt fresh so sessionSweep doesn't release its
+// concurrent-cashier-session slot while the client is still actively in use.
+router.post('/auth/heartbeat', auth, h(async (req, res) => {
+  if (req.user?.jti) await sessionService.heartbeat(req.user.jti);
   res.json({ ok: true });
 }));
 
@@ -166,7 +175,7 @@ router.patch('/orders/:id/cancel', auth, h(async (req, res) => res.json(await or
 router.patch('/orders/:id/status', auth, h(async (req, res) => res.json(await orderService.setStatus(req.params.id, req.body.status, req.user))));
 router.get('/orders/:id/invoice.pdf', auth, h(async (req, res) => {
   const order = await orderService.get(req.params.id, req.user);
-  const settings = (await repo('settings').getAll())[0] || {};
+  const settings = (await repo('settings').getAll({ restaurantId: req.user?.restaurantId }))[0] || {};
   const { renderInvoicePdf, renderInvoicePdfAr } = await import('../utils/pdf.js');
   const pdf = req.query.lang === 'ar' ? await renderInvoicePdfAr(order, settings) : await renderInvoicePdf(order, settings);
   res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': contentDisposition(`${order.invoiceNo || order.id}.pdf`) });

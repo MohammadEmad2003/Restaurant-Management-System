@@ -147,9 +147,11 @@ export default function Orders() {
   };
 
   /** Creates the order via the API, resets the cart, and returns the created
-   * order — printing is left to the caller, since whether it happens before
-   * or after any confirmation dialog differs by delivery-agent payment timing. */
-  const placeOrder = async ({ hasAgent, paymentTiming }) => {
+   * order — printing is left to the caller. `paymentTiming` is sent for ANY
+   * delivery order (registered agent OR manual/free-text courier) — both
+   * follow the exact same collection decision, so neither one bypasses the
+   * other (see orderService.create's isDeliveryCollection gate). */
+  const placeOrder = async ({ paymentTiming } = {}) => {
     const { data } = await api.post('/orders', {
       products: cart.map((x) => ({ productId: x.productId, quantity: x.quantity, unitPrice: x.unitPrice })),
       clientId: client?.id || null,
@@ -158,8 +160,8 @@ export default function Orders() {
       walkIn, isDelivery,
       deliveryAddress: isDelivery ? (deliveryAddress || client?.addresses?.[0] || '') : '',
       deliveryPerson: isDelivery ? deliveryPerson.trim() : '',
-      deliveryAgentId: hasAgent ? deliveryAgentId : null,
-      paymentTiming: hasAgent ? paymentTiming : undefined,
+      deliveryAgentId: deliveryAgentId || null,
+      paymentTiming: isDelivery ? paymentTiming : undefined,
       paymentMethod: payment, status: 'completed',
     });
     notify(`${t('orders.placed')} ${data.invoiceNo}`);
@@ -174,54 +176,33 @@ export default function Orders() {
     openReport(`/orders/${order.id}/invoice.pdf${ar ? '?lang=ar' : ''}`);
   };
 
-  const charge = async () => {
+  const charge = () => {
     if (!cart.length) return;
     // Delivery orders must record the delivery man's name (it is printed on the receipt).
     if (isDelivery && !deliveryPerson.trim()) {
       notify(t('orders.deliveryPersonRequired', 'Enter the delivery man name first'), 'error');
       return;
     }
-    const hasAgent = isDelivery && !!deliveryAgentId;
-    if (hasAgent) {
-      // Present all four collection-method options simultaneously — the
-      // cashier decides right here, at checkout, rather than pre-selecting a
-      // radio before the checkout button is even enabled.
+    if (isDelivery) {
+      // ANY delivery order — a registered Delivery Agent or a manual/free-text
+      // courier name — goes through the exact same four-option collection
+      // modal. Neither flow may bypass it or immediately count the order as
+      // paid; the cashier decides right here, at checkout.
       setCollectionModalOpen(true);
       return;
     }
+    placeAndPrint();
+  };
 
-    if (isDelivery) {
-      // Legacy free-text delivery (no registered agent): the order must NOT
-      // be created — let alone counted as paid — until the cashier explicitly
-      // confirms the cash was actually received. Confirm FIRST, create only
-      // if confirmed; cancelling here creates nothing at all: no order, no
-      // payment, no Cash Ledger/Drawer change. (This previously created the
-      // order before asking, so Cancel had no effect on money already
-      // counted — fixed to match the registered-agent PAID_NOW flow exactly.)
-      const deliveryName = deliveryPerson.trim();
-      const ok = await confirm({
-        title: t('orders.collectTitle', 'Cash collected?'),
-        message: t('orders.collectConfirm', 'Confirm you collected the payment from delivery man {{name}} before printing the receipt.').replace('{{name}}', deliveryName),
-        confirmLabel: t('orders.collectedPrint', 'Collected — print receipt'),
-      });
-      if (!ok) return;
-      setPlacing(true);
-      try {
-        const order = await placeOrder({ hasAgent: false });
-        refreshCashDrawer();
-        printInvoice(order);
-      } catch (e) {
-        notify(e.response?.data?.error || 'Failed', 'error');
-      } finally { setPlacing(false); }
-      return;
-    }
-
+  const placeAndPrint = async (paymentTiming) => {
     setPlacing(true);
     try {
-      const order = await placeOrder({ hasAgent: false });
+      const order = await placeOrder({ paymentTiming });
       printInvoice(order);
+      return order;
     } catch (e) {
       notify(e.response?.data?.error || 'Failed', 'error');
+      return null;
     } finally { setPlacing(false); }
   };
 
@@ -237,14 +218,8 @@ export default function Orders() {
       confirmLabel: t('orders.collectedPrint', 'Collected — print receipt'),
     });
     if (!ok) return;
-    setPlacing(true);
-    try {
-      const order = await placeOrder({ hasAgent: true, paymentTiming: 'PAID_NOW' });
-      refreshCashDrawer();
-      printInvoice(order);
-    } catch (e) {
-      notify(e.response?.data?.error || 'Failed', 'error');
-    } finally { setPlacing(false); }
+    const order = await placeAndPrint('PAID_NOW');
+    if (order) refreshCashDrawer();
   };
 
   /** Option 2 — الدفع آخر اليوم + طباعة الإيصال. Order is created as a real
@@ -252,28 +227,16 @@ export default function Orders() {
    * prompt (the money hasn't been received). */
   const choosePayEndOfDay = async () => {
     setCollectionModalOpen(false);
-    setPlacing(true);
-    try {
-      const order = await placeOrder({ hasAgent: true, paymentTiming: 'END_OF_DAY' });
-      refreshPendingCount();
-      printInvoice(order);
-    } catch (e) {
-      notify(e.response?.data?.error || 'Failed', 'error');
-    } finally { setPlacing(false); }
+    const order = await placeAndPrint('END_OF_DAY');
+    if (order) refreshPendingCount();
   };
 
   /** Option 3 — طباعة الإيصال فقط — لم يتم الدفع بعد. Distinct paymentTiming
    * from END_OF_DAY (different business intent), same PENDING mechanics. */
   const choosePrintUnpaid = async () => {
     setCollectionModalOpen(false);
-    setPlacing(true);
-    try {
-      const order = await placeOrder({ hasAgent: true, paymentTiming: 'UNPAID_PRINTED' });
-      refreshPendingCount();
-      printInvoice(order);
-    } catch (e) {
-      notify(e.response?.data?.error || 'Failed', 'error');
-    } finally { setPlacing(false); }
+    const order = await placeAndPrint('UNPAID_PRINTED');
+    if (order) refreshPendingCount();
   };
 
   /** Option 4 — إلغاء. Closes the dialog; nothing was created, nothing changes. */
@@ -441,11 +404,12 @@ export default function Orders() {
                   onChange={(e) => setDeliveryAddress(e.target.value)}
                   placeholder={client?.addresses?.[0] || t('orders.deliveryAddressPlaceholder', 'Street, building, floor, apartment, landmarks…')} />
               </div>
-              {deliveryAgentId && (
-                <div className="muted" style={{ fontSize: 11.5, marginBottom: 10 }}>
-                  {t('orders.collectionChoiceHint', 'Choosing to checkout will ask how the delivery agent will pay.')}
-                </div>
-              )}
+              {/* Applies whether or not a registered agent is picked — a
+                * manual/free-text courier goes through the exact same
+                * collection decision as a registered Delivery Agent. */}
+              <div className="muted" style={{ fontSize: 11.5, marginBottom: 10 }}>
+                {t('orders.collectionChoiceHint', 'Choosing to checkout will ask how the delivery agent will pay.')}
+              </div>
             </>
           )}
 

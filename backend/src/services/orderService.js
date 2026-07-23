@@ -104,23 +104,6 @@ export const orderService = {
       }
       deliveryAgentName = agent.name;
     }
-    // Delivery-agent orders carry an explicit paymentTiming that alone decides
-    // paymentStatus — PAID_NOW means the frontend has already gated order
-    // creation behind an explicit "money received" confirmation (see
-    // Orders.jsx), so by the time this runs the order genuinely is paid.
-    // END_OF_DAY and UNPAID_PRINTED both mean the agent hasn't handed the cash
-    // back yet — the order is real but the payment is only "expected", never
-    // conflated with money actually being in the drawer. They're kept as
-    // distinct values (not collapsed into one) because they represent
-    // different business intent even though both resolve to the same
-    // paymentStatus today. Every other order (no agent) keeps today's
-    // implicit "paid".
-    const paymentTiming = data.deliveryAgentId
-      ? (['PAID_NOW', 'UNPAID_PRINTED'].includes(data.paymentTiming) ? data.paymentTiming : 'END_OF_DAY')
-      : null;
-    const paymentStatus = data.deliveryAgentId
-      ? (paymentTiming === 'PAID_NOW' ? 'paid' : 'pending')
-      : 'paid';
 
     // Delivery fee: applied to phone/delivery orders, waived for walk-ins. The
     // fee amount is controlled by the admin in Settings.
@@ -128,6 +111,29 @@ export const orderService = {
     const walkIn = !!data.walkIn;
     const isDelivery = !walkIn && (data.isDelivery ?? !!clientPhone);
     const deliveryFee = isDelivery ? +(settings.deliveryFee || 0) : 0;
+
+    // Any delivery-collection order carries an explicit paymentTiming that
+    // alone decides paymentStatus — whether it's a REGISTERED delivery agent
+    // (deliveryAgentId set) or a manual/free-text courier (isDelivery true,
+    // no registered agent): both represent the exact same "someone else is
+    // holding the cash until collected" scenario and must go through the
+    // exact same collection decision, never one bypassing it. PAID_NOW means
+    // the frontend has already gated order creation behind an explicit
+    // "money received" confirmation (see Orders.jsx), so by the time this
+    // runs the order genuinely is paid. END_OF_DAY and UNPAID_PRINTED both
+    // mean the money hasn't been handed back yet — the order is real but the
+    // payment is only "expected", never conflated with money actually being
+    // in the drawer. They're kept as distinct values (not collapsed into one)
+    // because they represent different business intent even though both
+    // resolve to the same paymentStatus today. A non-delivery order (walk-in,
+    // dine-in) keeps today's implicit "paid" — there is nothing to collect.
+    const isDeliveryCollection = isDelivery || !!data.deliveryAgentId;
+    const paymentTiming = isDeliveryCollection
+      ? (['PAID_NOW', 'UNPAID_PRINTED'].includes(data.paymentTiming) ? data.paymentTiming : 'END_OF_DAY')
+      : null;
+    const paymentStatus = isDeliveryCollection
+      ? (paymentTiming === 'PAID_NOW' ? 'paid' : 'pending')
+      : 'paid';
     const grandTotal = +(total + deliveryFee).toFixed(2);
 
     const order = await repo('orders').create({
@@ -246,15 +252,21 @@ export const orderService = {
     return this.update(id, { status }, user);
   },
 
-  /** Delivery-agent orders, with optional agent/date/search/status filters —
-   * backs the Pending Payments page. Defaults to the pending queue; pass
-   * `status: 'paid'` or `'all'` to also see recently-settled agent orders
-   * (e.g. an end-of-day audit view) without a second, duplicate endpoint. */
+  /** Delivery-collection orders (registered agent OR manual/free-text
+   * courier), with optional agent/date/search/status filters — backs the
+   * Pending Payments page. Defaults to the pending queue; pass
+   * `status: 'paid'` or `'all'` to also see recently-settled orders (e.g. an
+   * end-of-day audit view) without a second, duplicate endpoint. */
   async listPendingPayments({ agentId, dateFrom, dateTo, q, status = 'pending' } = {}, user) {
     let rows = await repo('orders').getAll({ restaurantId: user?.restaurantId });
-    // This page is specifically the delivery-agent payment queue — a normal
-    // order (no agent) is never financially "pending" and has no business here.
-    rows = rows.filter((o) => !!o.deliveryAgentId);
+    // This page is specifically the delivery-collection queue — a plain
+    // walk-in/dine-in order (paymentTiming null) is never financially
+    // "pending" and has no business here. A manual/free-text courier order
+    // (no registered agent, but still a delivery collection) belongs here
+    // exactly the same as a registered-agent order — see create()'s
+    // isDeliveryCollection gate, which is the only thing that ever sets
+    // paymentTiming in the first place.
+    rows = rows.filter((o) => !!o.paymentTiming);
     if (status !== 'all') rows = rows.filter((o) => (o.paymentStatus || 'paid') === status);
     if (agentId) rows = rows.filter((o) => o.deliveryAgentId === agentId);
     if (dateFrom) rows = rows.filter((o) => (o.orderDate || 0) >= new Date(dateFrom).getTime());

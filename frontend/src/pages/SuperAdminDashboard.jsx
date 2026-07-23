@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../store/auth.js';
+import { useUI } from '../store/ui.js';
 import { api } from '../api/client.js';
 import { Modal } from '../components/ui.jsx';
 import {
-  Building2, Users, KeyRound, Monitor, Activity, ScrollText, Plus, Trash2, RefreshCw,
-  PauseCircle,
+  Building2, Users, KeyRound, Monitor, Activity, Plus, Trash2, RefreshCw,
+  PauseCircle, KeySquare, Laptop,
 } from 'lucide-react';
 
 const TABS = [
@@ -13,13 +14,15 @@ const TABS = [
   { key: 'licenses', label: 'Licenses', icon: KeyRound },
   { key: 'devices', label: 'Devices', icon: Monitor },
   { key: 'sessions', label: 'Sessions', icon: Activity },
-  { key: 'audit', label: 'Audit Logs', icon: ScrollText },
 ];
 
 export default function SuperAdminDashboard() {
   const { user, logout } = useAuth();
+  const confirm = useUI((s) => s.confirm);
   const [tab, setTab] = useState('restaurants');
-  const [data, setData] = useState({ restaurants: [], users: [], usersRestaurantId: '', licenses: {}, licensesRestaurantId: '', devices: [], devicesRestaurantId: '', sessions: [], sessionsRestaurantId: '', activeSessions: [], audit: [] });
+  const [data, setData] = useState({ restaurants: [], users: [], usersRestaurantId: '', licenses: {}, licensesRestaurantId: '', devices: [], devicesRestaurantId: '', sessions: [], sessionsRestaurantId: '', activeSessions: [], userDevices: {} });
+  const [expandedUser, setExpandedUser] = useState(null);
+  const [resetPasswordUser, setResetPasswordUser] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState('success');
@@ -37,12 +40,11 @@ export default function SuperAdminDashboard() {
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const [restaurants, sessions, audit] = await Promise.all([
+      const [restaurants, sessions] = await Promise.all([
         api.get('/superadmin/restaurants').then((r) => r.data),
         api.get('/superadmin/sessions').then((r) => r.data),
-        api.get('/superadmin/audit-logs').then((r) => r.data),
       ]);
-      setData((d) => ({ ...d, restaurants, sessions, audit }));
+      setData((d) => ({ ...d, restaurants, sessions }));
     } catch (e) { notify('Failed to load data', 'danger'); }
     setLoading(false);
   };
@@ -91,6 +93,36 @@ export default function SuperAdminDashboard() {
       const devices = await api.get(`/superadmin/restaurants/${restaurantId}/devices`).then((r) => r.data);
       setData((d) => ({ ...d, devices, devicesRestaurantId: restaurantId }));
     } catch (e) { notify('Failed to load devices', 'danger'); }
+  };
+
+  const toggleUserDevices = async (userId) => {
+    if (expandedUser === userId) { setExpandedUser(null); return; }
+    setExpandedUser(userId);
+    if (!data.userDevices[userId]) {
+      try {
+        const devices = await api.get(`/superadmin/users/${userId}/devices`).then((r) => r.data);
+        setData((d) => ({ ...d, userDevices: { ...d.userDevices, [userId]: devices } }));
+      } catch (e) { notify('Failed to load devices', 'danger'); }
+    }
+  };
+
+  const deleteUser = async (u) => {
+    const ok = await confirm({
+      title: 'Delete user?',
+      message: `Delete ${u.username}? Their past orders/salaries are kept for history; this only deactivates the account and revokes its sessions.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    await action('delete', `/superadmin/users/${u.id}`, 'User deleted');
+  };
+
+  const resetPassword = async (userId, password) => {
+    try {
+      await api.patch(`/superadmin/users/${userId}`, { password });
+      notify('Password reset — the user\'s existing sessions were revoked');
+      setResetPasswordUser(null);
+    } catch (e) { notify(e.response?.data?.error || 'Failed to reset password', 'danger'); }
   };
 
   const loadActiveSessions = async (restaurantId) => {
@@ -183,11 +215,26 @@ export default function SuperAdminDashboard() {
                 {data.users.map((u) => (
                   <div key={u.id} className="card" style={{ padding: 16 }}>
                     <div style={{ fontWeight: 700 }}>{u.username}</div>
-                    <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>{u.role} · {u.status}</div>
-                    {u.status === 'suspended' ? (
-                      <button className="btn btn--sm" onClick={() => action('patch', `/superadmin/users/${u.id}/activate`, 'Activated')}>Activate</button>
-                    ) : (
-                      <button className="btn btn--danger btn--sm" onClick={() => action('patch', `/superadmin/users/${u.id}/suspend`, 'Suspended')}>Suspend</button>
+                    <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>{u.role} · {u.status} · restaurant {u.restaurantId?.slice(0, 8)}</div>
+                    <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                      {u.status === 'suspended' ? (
+                        <button className="btn btn--sm" onClick={() => action('patch', `/superadmin/users/${u.id}/activate`, 'Activated')}>Activate</button>
+                      ) : (
+                        <button className="btn btn--sm" onClick={() => action('patch', `/superadmin/users/${u.id}/suspend`, 'Suspended')}>Suspend</button>
+                      )}
+                      <button className="btn btn--sm" onClick={() => setResetPasswordUser(u)}><KeySquare size={13} /> Reset Password</button>
+                      <button className="btn btn--sm" onClick={() => toggleUserDevices(u.id)}><Laptop size={13} /> Devices</button>
+                      <button className="btn btn--danger btn--sm" onClick={() => deleteUser(u)}><Trash2 size={13} /> Delete</button>
+                    </div>
+                    {expandedUser === u.id && (
+                      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+                        {(data.userDevices[u.id] || []).length === 0 && <div className="muted" style={{ fontSize: 12 }}>No devices registered.</div>}
+                        {(data.userDevices[u.id] || []).map((d) => (
+                          <div key={d.id} className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+                            {d.deviceName} ({d.operatingSystem}) · <span className={`badge badge--${d.status === 'active' ? 'success' : 'danger'}`} style={{ fontSize: 10 }}>{d.status}</span>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
                 ))}
@@ -211,14 +258,18 @@ export default function SuperAdminDashboard() {
                 return (
                   <div key={lic.id} className="card" style={{ padding: 16, marginBottom: 12 }}>
                     <div style={{ fontWeight: 700, marginBottom: 8 }}>{restaurant?.restaurantName || lic.restaurantId}</div>
-                    <div className="row" style={{ gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+                    <div className="row" style={{ gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
                       <span className={`badge badge--${lic.status === 'active' ? 'success' : lic.status === 'expired' ? 'danger' : 'warning'}`}>{lic.status}</span>
-                      <span className="badge">Expires: {new Date(lic.expirationDate).toLocaleDateString()}</span>
+                      <span className="badge" title="License Expiration — whether the restaurant's subscription is licensed to use the app at all">Expires: {new Date(lic.expirationDate).toLocaleDateString()}</span>
                       <span className="badge">Devices: {lic.activeDevices}/{lic.maximumDevices}</span>
-                      <span className="badge">Validation: {lic.validationIntervalHours}h</span>
+                      <span className="badge" title="Rolling Online Validation — how often a device must successfully reconnect to keep its offline access refreshed">Validation: {lic.validationIntervalHours}h</span>
+                      <span className="badge" title="Offline Access Lease — how long a device may keep working offline before it must validate online again">Offline Lease: {lic.offlineDays}d</span>
                       <span className="badge">Max Cashier Sessions: {lic.maxConcurrentCashierSessions ?? 1}</span>
-                      <span className="badge">Session Timeout: {lic.sessionTimeoutMinutes ?? 30}m</span>
+                      <span className="badge" title="Session Timeout — how long a user's session can stay idle before requiring re-authentication (not the JWT expiration)">Session Timeout: {lic.sessionTimeoutMinutes ?? 30}m</span>
                     </div>
+                    <p className="muted" style={{ fontSize: 11.5, marginBottom: 12 }}>
+                      Session Timeout, JWT Expiration, License Expiration, Rolling Validation and the Offline Access Lease are five independent controls — hover each badge above for what it governs.
+                    </p>
                     <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
                       <button className="btn btn--sm" onClick={() => { navigator.clipboard.writeText(lic.activationToken); notify('Token copied'); }}>Copy Token</button>
                       <button className="btn btn--sm" onClick={() => action('post', `/superadmin/licenses/${lic.restaurantId}/regenerate-token`, 'Token regenerated')}>Regenerate</button>
@@ -230,6 +281,12 @@ export default function SuperAdminDashboard() {
                       lic={lic}
                       onSaveMax={(count) => action('patch', `/superadmin/licenses/${lic.restaurantId}/max-concurrent-cashiers`, 'Max cashier sessions updated', { count })}
                       onSaveTimeout={(minutes) => action('patch', `/superadmin/licenses/${lic.restaurantId}/session-timeout`, 'Session timeout updated', { minutes })}
+                    />
+                    <ValidationSettings
+                      key={`${lic.id}-validation`}
+                      lic={lic}
+                      onSaveValidation={(hours) => action('patch', `/superadmin/licenses/${lic.restaurantId}/validation-interval`, 'Validation interval updated', { hours })}
+                      onSaveOffline={(days) => action('patch', `/superadmin/licenses/${lic.restaurantId}/offline-days`, 'Offline access lease updated', { days })}
                     />
                   </div>
                 );
@@ -301,20 +358,6 @@ export default function SuperAdminDashboard() {
               )}
             </div>
           )}
-
-          {tab === 'audit' && (
-            <div>
-              <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 16 }}>Audit Logs</h2>
-              {data.audit.slice(0, 50).map((log) => (
-                <div key={log.id} className="card" style={{ padding: 12, marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{log.action}</div>
-                    <div className="muted" style={{ fontSize: 12 }}>{new Date(log.timestamp).toLocaleString()}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </main>
       </div>
 
@@ -324,6 +367,33 @@ export default function SuperAdminDashboard() {
       <Modal open={modal === 'createUser'} onClose={() => setModal(null)} title="Create Restaurant User" footer={null}>
         <CreateUserForm restaurants={data.restaurants} defaultRestaurantId={data.usersRestaurantId || data.restaurants[0]?.id} onClose={() => setModal(null)} onCreate={createUser} />
       </Modal>
+      <Modal open={!!resetPasswordUser} onClose={() => setResetPasswordUser(null)} title={`Reset Password — ${resetPasswordUser?.username || ''}`} footer={null}>
+        <ResetPasswordForm onClose={() => setResetPasswordUser(null)} onSubmit={(password) => resetPassword(resetPasswordUser.id, password)} />
+      </Modal>
+    </div>
+  );
+}
+
+function ResetPasswordForm({ onClose, onSubmit }) {
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async () => {
+    if (!password) return;
+    setSubmitting(true);
+    try { await onSubmit(password); } finally { setSubmitting(false); }
+  };
+
+  return (
+    <div>
+      <p className="muted" style={{ fontSize: 12.5, marginBottom: 12 }}>
+        This immediately revokes the user's existing active sessions — a still-open device/tab will be signed out on its next request.
+      </p>
+      <div className="field"><label>New Password</label><input className="input" type="text" value={password} onChange={(e) => setPassword(e.target.value)} /></div>
+      <div className="row" style={{ gap: 10, justifyContent: 'flex-end', marginTop: 20 }}>
+        <button className="btn btn--ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn--primary" disabled={submitting || !password} onClick={submit}>Save</button>
+      </div>
     </div>
   );
 }
@@ -395,6 +465,32 @@ function CashierSessionSettings({ lic, onSaveMax, onSaveTimeout }) {
         <input className="input" type="number" min={1} value={timeoutMinutes} onChange={(e) => setTimeoutMinutes(Number(e.target.value))} style={{ width: 100 }} />
       </div>
       <button className="btn btn--sm" onClick={() => onSaveTimeout(timeoutMinutes)}>Save</button>
+    </div>
+  );
+}
+
+function ValidationSettings({ lic, onSaveValidation, onSaveOffline }) {
+  const [hours, setHours] = useState(lic.validationIntervalHours ?? 24);
+  const [days, setDays] = useState(lic.offlineDays ?? 7);
+
+  return (
+    <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+      <div className="row" style={{ gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div className="field" style={{ margin: 0 }}>
+          <label>Validation Interval (hours)</label>
+          <input className="input" type="number" min={1} value={hours} onChange={(e) => setHours(Number(e.target.value))} style={{ width: 100 }} />
+        </div>
+        <button className="btn btn--sm" onClick={() => onSaveValidation(hours)}>Save</button>
+        <div className="field" style={{ margin: 0 }}>
+          <label>Offline Access Lease (days)</label>
+          <input className="input" type="number" min={1} value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ width: 100 }} />
+        </div>
+        <button className="btn btn--sm" onClick={() => onSaveOffline(days)}>Save</button>
+      </div>
+      <p className="muted" style={{ fontSize: 11.5, marginTop: 8 }}>
+        A device validates online at every login (and periodically while online via heartbeat), refreshing its offline lease.
+        Within the Validation Interval, it stays fully usable offline; past it (but before the Offline Access Lease expires) it's asked to reconnect; past the lease, it's signed out.
+      </p>
     </div>
   );
 }

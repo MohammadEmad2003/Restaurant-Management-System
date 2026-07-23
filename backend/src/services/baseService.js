@@ -1,10 +1,9 @@
 import { repo } from '../repositories/index.js';
-import { recordAudit } from '../middleware/audit.js';
 import { HttpError } from '../middleware/errorHandler.js';
 
 /**
- * Factory producing a standard CRUD service over a collection, with audit
- * logging baked in. Domain services compose or extend this.
+ * Factory producing a standard CRUD service over a collection. Domain
+ * services compose or extend this.
  */
 export function createCrudService(collection, { entityName } = {}) {
   const name = entityName || collection;
@@ -20,9 +19,7 @@ export function createCrudService(collection, { entityName } = {}) {
       return r;
     },
     create: async (data, user) => {
-      const created = await repo(collection).create({ ...data, restaurantId: user?.restaurantId });
-      await recordAudit(user, `${name.toUpperCase()}_CREATED`, collection, created.id, { after: created });
-      return created;
+      return repo(collection).create({ ...data, restaurantId: user?.restaurantId });
     },
     update: async (id, patch, user) => {
       const before = await repo(collection).getById(id);
@@ -30,9 +27,7 @@ export function createCrudService(collection, { entityName } = {}) {
       if (user?.restaurantId && before.restaurantId && before.restaurantId !== user.restaurantId) {
         throw new HttpError(404, `${name} not found`);
       }
-      const updated = await repo(collection).update(id, { ...patch, restaurantId: before.restaurantId || user?.restaurantId });
-      await recordAudit(user, `${name.toUpperCase()}_UPDATED`, collection, id, { before, after: updated });
-      return updated;
+      return repo(collection).update(id, { ...patch, restaurantId: before.restaurantId || user?.restaurantId });
     },
     remove: async (id, user) => {
       const before = await repo(collection).getById(id);
@@ -41,7 +36,6 @@ export function createCrudService(collection, { entityName } = {}) {
         throw new HttpError(404, `${name} not found`);
       }
       await repo(collection).remove(id);
-      await recordAudit(user, `${name.toUpperCase()}_DELETED`, collection, id, { before });
       return { ok: true };
     },
   };

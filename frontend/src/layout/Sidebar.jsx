@@ -5,7 +5,7 @@ import { useFetch } from '../hooks/useApi.js';
 import {
   LayoutDashboard, ShoppingCart, ChefHat, Pizza, Boxes, ClipboardCheck,
   Users, Gift, CalendarClock, UserCog, Clock, CalendarRange,
-  Wallet, FileBarChart, ScrollText, Settings as Cog, RefreshCw, UtensilsCrossed, Home, Banknote,
+  Wallet, FileBarChart, Settings as Cog, RefreshCw, UtensilsCrossed, Home, Banknote, Truck,
 } from 'lucide-react';
 
 const SECTIONS = [
@@ -28,6 +28,7 @@ const SECTIONS = [
       { to: '/petty-cash', icon: Wallet, label: 'pettyCash' },
       { to: '/rents', icon: Home, label: 'periodicPayments', featureKey: 'rents', admin: true },
       { to: '/cash-advances', icon: Banknote, label: 'cashAdvances' },
+      { to: '/pending-payments', icon: Truck, label: 'pendingPayments' },
       { to: '/reports', icon: FileBarChart, label: 'reports', admin: true },
     ],
   },
@@ -47,7 +48,6 @@ const SECTIONS = [
   {
     key: 'sectionSystem',
     items: [
-      { to: '/audit', icon: ScrollText, label: 'audit', admin: true },
       { to: '/sync', icon: RefreshCw, label: 'sync' },
       { to: '/settings', icon: Cog, label: 'settings', admin: true },
     ],

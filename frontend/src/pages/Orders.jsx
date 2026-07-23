@@ -1,21 +1,38 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Minus, Trash2, Printer, Search, Receipt, User, X, Phone } from 'lucide-react';
+import { Plus, Minus, Trash2, Printer, Search, Receipt, User, X, Phone, Pencil, Wallet, Clock } from 'lucide-react';
 import { useFetch } from '../hooks/useApi.js';
 import { api, openReport } from '../api/client.js';
 import { useUI } from '../store/ui.js';
-import { Card, PageHeader, Spinner, Badge } from '../components/ui.jsx';
+import { usePosStats } from '../store/posStats.js';
+import { Card, PageHeader, Spinner, Badge, Modal, LocationSelect } from '../components/ui.jsx';
 import { money, shortName } from '../utils/format.js';
 import { posFontStyle } from '../utils/posTypography.js';
+
+const emptyCustForm = { name: '', phone: '', address: '', city: '', area: '' };
 
 export default function Orders() {
   const { t } = useTranslation();
   const lang = useUI((s) => s.lang);
   const notify = useUI((s) => s.notify);
   const { data: products, loading } = useFetch('/products', []);
-  const { data: clients } = useFetch('/clients', []);
+  const { data: clients, refetch: refetchClients } = useFetch('/clients', []);
   const { data: settings } = useFetch('/settings', []);
   const { refetch: refetchOrders } = useFetch('/orders', []);
+  const { data: agents } = useFetch('/delivery-agents', []);
+  // Restaurant-wide authoritative Cash Drawer total and Pending Payments
+  // count come from a SHARED store (usePosStats), not a page-local fetch —
+  // any page that settles a payment (e.g. PendingPayments.jsx) updates the
+  // same store, so these figures are correct here the instant that happens,
+  // not only after this page happens to remount. The backend Restaurant Cash
+  // Ledger remains the only source of truth; this store just holds its last
+  // fetched value so pages don't independently drift.
+  const drawerAmount = usePosStats((s) => s.cashDrawerTotal);
+  const pendingCount = usePosStats((s) => s.pendingPaymentsCount);
+  const refreshCashDrawer = usePosStats((s) => s.refreshCashDrawer);
+  const refreshPendingCount = usePosStats((s) => s.refreshPendingCount);
+  useEffect(() => { refreshCashDrawer(); refreshPendingCount(); }, [refreshCashDrawer, refreshPendingCount]);
+  const { data: locTree } = useFetch('/locations/tree', []);
   const confirm = useUI((s) => s.confirm);
 
   const [cart, setCart] = useState([]);
@@ -27,7 +44,18 @@ export default function Orders() {
   const [walkIn, setWalkIn] = useState(false);
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [deliveryPerson, setDeliveryPerson] = useState('');
+  const [deliveryAgentId, setDeliveryAgentId] = useState('');
   const [placing, setPlacing] = useState(false);
+  // Shows the four simultaneous collection-method options (Paid Now / End of
+  // Day / Print Unpaid / Cancel) the moment the cashier checks out a
+  // delivery-agent order — all four visible at once, never one hidden behind
+  // another screen.
+  const [collectionModalOpen, setCollectionModalOpen] = useState(false);
+
+  const [custModal, setCustModal] = useState(false);
+  const [custForm, setCustForm] = useState(emptyCustForm);
+  const [custEditingId, setCustEditingId] = useState(null);
+  const [custSaving, setCustSaving] = useState(false);
 
   const categories = useMemo(() => ['all', ...new Set((products || []).map((p) => p.category))], [products]);
   const filtered = (products || []).filter((p) =>
@@ -45,6 +73,54 @@ export default function Orders() {
     ).slice(0, 6);
   }, [custQuery, clients, client, lang]);
 
+  // A full phone number (7+ digits) typed with no match → offer to add a new customer.
+  const looksLikePhone = /\d{7,}/.test(norm(custQuery));
+  const showAddCustomer = !client && custQuery.trim().length >= 2 && custMatches.length === 0 && looksLikePhone;
+
+  const openNewCustomer = () => {
+    setCustEditingId(null);
+    setCustForm({ ...emptyCustForm, phone: custQuery.trim() });
+    setCustModal(true);
+  };
+  const openEditCustomer = () => {
+    if (!client) return;
+    setCustEditingId(client.id);
+    setCustForm({
+      name: client.name || '', phone: client.phoneNumbers?.[0] || '', address: client.addresses?.[0] || '',
+      city: client.city || '', area: client.area || '',
+    });
+    setCustModal(true);
+  };
+  const saveCustomer = async () => {
+    if (!custForm.name.trim()) { notify(t('common.name') + ' ' + t('common.required', 'is required'), 'error'); return; }
+    setCustSaving(true);
+    try {
+      const payload = {
+        name: custForm.name.trim(),
+        phoneNumbers: custForm.phone ? [custForm.phone] : [],
+        addresses: custForm.address ? [custForm.address] : [],
+        city: custForm.city || '', area: custForm.area || '',
+      };
+      let saved;
+      if (custEditingId) {
+        const { data } = await api.put(`/clients/${custEditingId}`, payload);
+        saved = data;
+      } else {
+        const { data } = await api.post('/clients', payload);
+        saved = data;
+      }
+      notify(custEditingId ? t('clients.updated', 'Customer updated') : t('clients.added', 'Customer added'));
+      setCustModal(false);
+      refetchClients();
+      // Select the new/updated customer immediately — continue the order flow
+      // without forcing the cashier to search again.
+      setClient(saved);
+      setCustQuery('');
+    } catch (e) {
+      notify(e.response?.data?.error || 'Failed', 'error');
+    } finally { setCustSaving(false); }
+  };
+
   const add = (p) => setCart((c) => {
     const ex = c.find((x) => x.productId === p.id);
     if (ex) return c.map((x) => x.productId === p.id ? { ...x, quantity: x.quantity + 1 } : x);
@@ -57,6 +133,46 @@ export default function Orders() {
   const isDelivery = !!client && !walkIn;
   const deliveryFee = isDelivery ? Number(settings?.deliveryFee || 0) : 0;
   const total = subtotal + deliveryFee;
+  const activeAgents = (agents || []).filter((a) => a.active !== false);
+
+  const selectAgent = (id) => {
+    setDeliveryAgentId(id);
+    const agent = activeAgents.find((a) => a.id === id);
+    if (agent) setDeliveryPerson(agent.name);
+  };
+
+  const resetCart = () => {
+    setCart([]); setClient(null); setCustQuery(''); setWalkIn(false); setDeliveryAddress(''); setDeliveryPerson('');
+    setDeliveryAgentId('');
+  };
+
+  /** Creates the order via the API, resets the cart, and returns the created
+   * order — printing is left to the caller, since whether it happens before
+   * or after any confirmation dialog differs by delivery-agent payment timing. */
+  const placeOrder = async ({ hasAgent, paymentTiming }) => {
+    const { data } = await api.post('/orders', {
+      products: cart.map((x) => ({ productId: x.productId, quantity: x.quantity, unitPrice: x.unitPrice })),
+      clientId: client?.id || null,
+      clientName: client?.name || 'Walk-in',
+      clientPhone: client?.phoneNumbers?.[0] || null,
+      walkIn, isDelivery,
+      deliveryAddress: isDelivery ? (deliveryAddress || client?.addresses?.[0] || '') : '',
+      deliveryPerson: isDelivery ? deliveryPerson.trim() : '',
+      deliveryAgentId: hasAgent ? deliveryAgentId : null,
+      paymentTiming: hasAgent ? paymentTiming : undefined,
+      paymentMethod: payment, status: 'completed',
+    });
+    notify(`${t('orders.placed')} ${data.invoiceNo}`);
+    resetCart();
+    refetchOrders();
+    return data;
+  };
+
+  const printInvoice = (order) => {
+    // Receipt follows the current system language (no prompt).
+    const ar = lang === 'ar';
+    openReport(`/orders/${order.id}/invoice.pdf${ar ? '?lang=ar' : ''}`);
+  };
 
   const charge = async () => {
     if (!cart.length) return;
@@ -65,45 +181,116 @@ export default function Orders() {
       notify(t('orders.deliveryPersonRequired', 'Enter the delivery man name first'), 'error');
       return;
     }
+    const hasAgent = isDelivery && !!deliveryAgentId;
+    if (hasAgent) {
+      // Present all four collection-method options simultaneously — the
+      // cashier decides right here, at checkout, rather than pre-selecting a
+      // radio before the checkout button is even enabled.
+      setCollectionModalOpen(true);
+      return;
+    }
+
+    if (isDelivery) {
+      // Legacy free-text delivery (no registered agent): the order must NOT
+      // be created — let alone counted as paid — until the cashier explicitly
+      // confirms the cash was actually received. Confirm FIRST, create only
+      // if confirmed; cancelling here creates nothing at all: no order, no
+      // payment, no Cash Ledger/Drawer change. (This previously created the
+      // order before asking, so Cancel had no effect on money already
+      // counted — fixed to match the registered-agent PAID_NOW flow exactly.)
+      const deliveryName = deliveryPerson.trim();
+      const ok = await confirm({
+        title: t('orders.collectTitle', 'Cash collected?'),
+        message: t('orders.collectConfirm', 'Confirm you collected the payment from delivery man {{name}} before printing the receipt.').replace('{{name}}', deliveryName),
+        confirmLabel: t('orders.collectedPrint', 'Collected — print receipt'),
+      });
+      if (!ok) return;
+      setPlacing(true);
+      try {
+        const order = await placeOrder({ hasAgent: false });
+        refreshCashDrawer();
+        printInvoice(order);
+      } catch (e) {
+        notify(e.response?.data?.error || 'Failed', 'error');
+      } finally { setPlacing(false); }
+      return;
+    }
+
     setPlacing(true);
     try {
-      const { data } = await api.post('/orders', {
-        products: cart.map((x) => ({ productId: x.productId, quantity: x.quantity, unitPrice: x.unitPrice })),
-        clientId: client?.id || null,
-        clientName: client?.name || 'Walk-in',
-        clientPhone: client?.phoneNumbers?.[0] || null,
-        walkIn, isDelivery,
-        deliveryAddress: isDelivery ? (deliveryAddress || client?.addresses?.[0] || '') : '',
-        deliveryPerson: isDelivery ? deliveryPerson.trim() : '',
-        paymentMethod: payment, status: 'completed',
-      });
-      notify(`${t('orders.placed')} ${data.invoiceNo}`);
-      const wasDelivery = isDelivery;
-      const deliveryName = deliveryPerson.trim();
-      setCart([]); setClient(null); setCustQuery(''); setWalkIn(false); setDeliveryAddress(''); setDeliveryPerson('');
-      refetchOrders();
-      // For delivery orders, confirm the cashier collected the cash from the delivery man before printing.
-      if (wasDelivery) {
-        const ok = await confirm({
-          title: t('orders.collectTitle', 'Cash collected?'),
-          message: t('orders.collectConfirm', 'Confirm you collected the payment from delivery man {{name}} before printing the receipt.').replace('{{name}}', deliveryName),
-          confirmLabel: t('orders.collectedPrint', 'Collected — print receipt'),
-        });
-        if (!ok) return;
-      }
-      // Receipt follows the current system language (no prompt).
-      const ar = lang === 'ar';
-      openReport(`/orders/${data.id}/invoice.pdf${ar ? '?lang=ar' : ''}`);
+      const order = await placeOrder({ hasAgent: false });
+      printInvoice(order);
     } catch (e) {
       notify(e.response?.data?.error || 'Failed', 'error');
     } finally { setPlacing(false); }
   };
 
+  /** Option 1 — الدفع الآن + طباعة الإيصال. A SECOND confirmation step (not
+   * one of the four options) verifies the cash was actually received before
+   * the order is created at all — cancelling here creates nothing: no order,
+   * no payment, no Cash Ledger/Drawer change. */
+  const choosePaidNow = async () => {
+    setCollectionModalOpen(false);
+    const ok = await confirm({
+      title: t('orders.collectTitle', 'Cash collected?'),
+      message: t('orders.collectConfirm', 'Confirm you collected the payment from delivery man {{name}} before printing the receipt.').replace('{{name}}', deliveryPerson.trim()),
+      confirmLabel: t('orders.collectedPrint', 'Collected — print receipt'),
+    });
+    if (!ok) return;
+    setPlacing(true);
+    try {
+      const order = await placeOrder({ hasAgent: true, paymentTiming: 'PAID_NOW' });
+      refreshCashDrawer();
+      printInvoice(order);
+    } catch (e) {
+      notify(e.response?.data?.error || 'Failed', 'error');
+    } finally { setPlacing(false); }
+  };
+
+  /** Option 2 — الدفع آخر اليوم + طباعة الإيصال. Order is created as a real
+   * PENDING record immediately, printed immediately, no "cash received"
+   * prompt (the money hasn't been received). */
+  const choosePayEndOfDay = async () => {
+    setCollectionModalOpen(false);
+    setPlacing(true);
+    try {
+      const order = await placeOrder({ hasAgent: true, paymentTiming: 'END_OF_DAY' });
+      refreshPendingCount();
+      printInvoice(order);
+    } catch (e) {
+      notify(e.response?.data?.error || 'Failed', 'error');
+    } finally { setPlacing(false); }
+  };
+
+  /** Option 3 — طباعة الإيصال فقط — لم يتم الدفع بعد. Distinct paymentTiming
+   * from END_OF_DAY (different business intent), same PENDING mechanics. */
+  const choosePrintUnpaid = async () => {
+    setCollectionModalOpen(false);
+    setPlacing(true);
+    try {
+      const order = await placeOrder({ hasAgent: true, paymentTiming: 'UNPAID_PRINTED' });
+      refreshPendingCount();
+      printInvoice(order);
+    } catch (e) {
+      notify(e.response?.data?.error || 'Failed', 'error');
+    } finally { setPlacing(false); }
+  };
+
+  /** Option 4 — إلغاء. Closes the dialog; nothing was created, nothing changes. */
+  const cancelCollectionChoice = () => setCollectionModalOpen(false);
+
   if (loading) return <Spinner />;
 
   return (
     <div className="fade-in">
-      <PageHeader title={t('orders.title')} subtitle={t('orders.subtitle')} />
+      <PageHeader title={t('orders.title')} subtitle={t('orders.subtitle')}>
+        <div className="row wrap" style={{ gap: 8 }}>
+          {drawerAmount != null && (
+            <Badge kind="brand"><Wallet size={12} /> {t('orders.cashInDrawer', 'Cash in Drawer')}: {money(drawerAmount)}</Badge>
+          )}
+          <Badge kind={pendingCount > 0 ? 'warning' : 'brand'}><Clock size={12} /> {t('pendingPayments.title', 'Pending Payments')}: {pendingCount}</Badge>
+        </div>
+      </PageHeader>
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 360px', gap: 18, alignItems: 'start', ...posFontStyle(settings) }}>
         {/* Menu */}
         <div>
@@ -149,9 +336,14 @@ export default function Orders() {
                     <span className="ltr">{client.phoneNumbers?.[0] || '—'}</span> · {client.loyaltyPoints || 0} pts · {client.visitCount || 0} visits
                   </div>
                 </div>
-                <button className="btn btn--icon btn--sm" title={t('orders.walkIn')} onClick={() => { setClient(null); setCustQuery(''); }}>
-                  <X size={14} />
-                </button>
+                <div className="row" style={{ gap: 4 }}>
+                  <button className="btn btn--icon btn--sm" title={t('common.edit')} onClick={openEditCustomer}>
+                    <Pencil size={13} />
+                  </button>
+                  <button className="btn btn--icon btn--sm" title={t('orders.walkIn')} onClick={() => { setClient(null); setCustQuery(''); }}>
+                    <X size={14} />
+                  </button>
+                </div>
               </div>
             ) : (
               <div style={{ position: 'relative' }}>
@@ -181,8 +373,13 @@ export default function Orders() {
                     ))}
                   </div>
                 )}
-                {custQuery.trim().length >= 2 && custMatches.length === 0 && (
+                {custQuery.trim().length >= 2 && custMatches.length === 0 && !showAddCustomer && (
                   <div className="muted" style={{ fontSize: 12, padding: '6px 4px 0' }}>{t('orders.customerNone')}</div>
+                )}
+                {showAddCustomer && (
+                  <button className="btn btn--sm btn--primary" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }} onClick={openNewCustomer}>
+                    <Plus size={14} /> {t('clients.notFound', 'Customer not found')} — {t('clients.addCustomer', 'Add Customer')}
+                  </button>
                 )}
               </div>
             )}
@@ -221,6 +418,15 @@ export default function Orders() {
 
           {isDelivery && (
             <>
+              {activeAgents.length > 0 && (
+                <div className="field" style={{ marginBottom: 10 }}>
+                  <label>{t('orders.deliveryAgent', 'Delivery Agent')}</label>
+                  <select className="select" value={deliveryAgentId} onChange={(e) => selectAgent(e.target.value)}>
+                    <option value="">{t('orders.noAgent', 'No agent (walk-in courier)')}</option>
+                    {activeAgents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </select>
+                </div>
+              )}
               <div className="field" style={{ marginBottom: 10 }}>
                 <label>{t('orders.deliveryPerson', 'Delivery Man')} *</label>
                 {/* Required for delivery orders — printed on the receipt */}
@@ -235,6 +441,11 @@ export default function Orders() {
                   onChange={(e) => setDeliveryAddress(e.target.value)}
                   placeholder={client?.addresses?.[0] || t('orders.deliveryAddressPlaceholder', 'Street, building, floor, apartment, landmarks…')} />
               </div>
+              {deliveryAgentId && (
+                <div className="muted" style={{ fontSize: 11.5, marginBottom: 10 }}>
+                  {t('orders.collectionChoiceHint', 'Choosing to checkout will ask how the delivery agent will pay.')}
+                </div>
+              )}
             </>
           )}
 
@@ -254,6 +465,48 @@ export default function Orders() {
           </button>
         </Card>
       </div>
+
+      {/* Inline add/edit customer — keeps the cashier in the order flow */}
+      <Modal open={custModal} onClose={() => setCustModal(false)} title={custEditingId ? t('clients.edit', 'Edit Customer') : t('clients.new', 'New Customer')}
+        footer={<><button className="btn" onClick={() => setCustModal(false)}>{t('common.cancel')}</button><button className="btn btn--primary" disabled={custSaving} onClick={saveCustomer}>{t('common.save')}</button></>}>
+        <div className="field"><label>{t('common.name')}</label><input className="input" autoFocus value={custForm.name} onChange={(e) => setCustForm({ ...custForm, name: e.target.value })} /></div>
+        <div className="field"><label>{t('common.phone')}</label><input className="input ltr" value={custForm.phone} onChange={(e) => setCustForm({ ...custForm, phone: e.target.value })} placeholder="+20 100 000 0000" /></div>
+        <div style={{ marginBottom: 14 }}>
+          <LocationSelect tree={locTree || {}} city={custForm.city} area={custForm.area}
+            onChange={({ city, area }) => setCustForm({ ...custForm, city, area })} />
+        </div>
+        <div className="field">
+          <label>{t('clients.deliveryAddress', 'Delivery Address')}</label>
+          <textarea className="textarea" rows={3} value={custForm.address} onChange={(e) => setCustForm({ ...custForm, address: e.target.value })} placeholder={t('clients.addressPlaceholder', 'Street, building, floor, apartment, landmarks…')} />
+        </div>
+      </Modal>
+
+      {/* Delivery-agent collection choice — all four options visible at once.
+       * The "cash received?" confirmation is a SEPARATE, second step that only
+       * follows choosing Option 1 (see choosePaidNow) — it never replaces or
+       * hides these four options. */}
+      <Modal open={collectionModalOpen} onClose={cancelCollectionChoice} title={t('orders.collectionChooseTitle', 'Choose Collection Method')} footer={null}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <button className="btn btn--primary" style={{ width: '100%', justifyContent: 'center', padding: 12 }} disabled={placing} onClick={choosePaidNow}>
+            {t('orders.paidNowPrint', 'Pay Now + Print Receipt')}
+          </button>
+          <button className="btn" style={{ width: '100%', justifyContent: 'center', padding: 12 }} disabled={placing} onClick={choosePayEndOfDay}>
+            {t('orders.payEndOfDayPrint', 'Pay at End of Day + Print Receipt')}
+          </button>
+          <div className="muted" style={{ fontSize: 11.5, marginTop: -6 }}>
+            {t('orders.pendingUntilCollected', 'The order will be saved as a pending payment. The amount will not be added to the Cash Drawer until collection is confirmed.')}
+          </div>
+          <button className="btn" style={{ width: '100%', justifyContent: 'center', padding: 12 }} disabled={placing} onClick={choosePrintUnpaid}>
+            {t('orders.printUnpaid', 'Print receipt only — not paid yet')}
+          </button>
+          <div className="muted" style={{ fontSize: 11.5, marginTop: -6 }}>
+            {t('orders.unpaidPrintedHint', 'The receipt will print now, but the payment has not been received. The order will be saved as a pending payment until it is collected and confirmed.')}
+          </div>
+          <button className="btn btn--ghost" style={{ width: '100%', justifyContent: 'center', padding: 12 }} onClick={cancelCollectionChoice}>
+            {t('common.cancel')}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

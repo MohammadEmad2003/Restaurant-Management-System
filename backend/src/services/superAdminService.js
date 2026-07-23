@@ -69,8 +69,9 @@ export const superAdminService = {
   },
 
   async createRestaurantUser(restaurantId, { username, password, role, status = 'active' }) {
-    const existing = await store.findOne('users', { restaurantId, username });
-    if (existing) throw new HttpError(409, 'Username already exists in this restaurant');
+    // Multiple users may intentionally share a username within one restaurant,
+    // disambiguated at login by device binding (see authService's userIdHint) —
+    // no uniqueness check here by design.
     return store.create('users', {
       restaurantId,
       username,
@@ -89,11 +90,16 @@ export const superAdminService = {
     const user = await store.findOne('users', { id: userId });
     if (!user) throw new HttpError(404, 'User not found');
     const updates = { ...patch };
+    const isPasswordChange = !!updates.password;
     if (updates.password) {
       updates.passwordHash = await hashPassword(updates.password);
       delete updates.password;
     }
-    return store.update('users', userId, updates);
+    const updated = await store.update('users', userId, updates);
+    // A password reset invalidates any existing session — otherwise a stolen/
+    // shared old session would keep working after the credential change.
+    if (isPasswordChange) await sessionService.expireAllForUser(userId);
+    return updated;
   },
 
   async suspendRestaurantUser(userId) {
@@ -107,7 +113,9 @@ export const superAdminService = {
   },
 
   async deleteRestaurantUser(userId) {
-    return store.update('users', userId, { status: 'inactive' });
+    const user = await store.update('users', userId, { status: 'inactive' });
+    await sessionService.expireAllForUser(userId);
+    return user;
   },
 
   async getLicense(id) {

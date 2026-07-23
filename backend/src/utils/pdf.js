@@ -581,9 +581,11 @@ export function renderInvoicePdf(order, meta = {}) {
     kv('Date', new Date(order.orderDate || Date.now()).toLocaleString());
     if (order.clientName) kv('Customer', latin(order.clientName));
     if (order.clientPhone) kv('Phone', order.clientPhone);
-    if (order.area || order.governorate) kv('Location', latin([order.area, order.governorate].filter(Boolean).join(' / ')));
+    if (order.area || order.city) kv('Location', latin([order.area, order.city].filter(Boolean).join(' / ')));
     if (order.deliveryAddress) kv('Deliver to', latin(order.deliveryAddress));
     if (order.deliveryPerson) kv('Delivery', latin(order.deliveryPerson));
+    if (order.deliveryAgentName) kv('Delivery Agent', latin(order.deliveryAgentName));
+    if (order.deliveryAgentId) kv('Payment Status', order.paymentStatus === 'paid' ? 'PAID' : 'PENDING');
     if (order.cashierName) kv('Cashier', latin(order.cashierName));
 
     divider();
@@ -769,9 +771,11 @@ export function renderInvoicePdfAr(order, meta = {}) {
     const clientAr = (order.walkIn || /walk[\s-]?in/i.test(String(order.clientName || ''))) ? 'زبون عابر' : ar(order.clientName);
     if (order.clientName || order.walkIn) kv('عميل', clientAr);
     if (order.clientPhone) kv('هاتف', order.clientPhone);
-    if (order.area || order.governorate) kv('موقع', [ar(order.area), ar(order.governorate)].filter(Boolean).join(' - '));
+    if (order.area || order.city) kv('موقع', [ar(order.area), ar(order.city)].filter(Boolean).join(' - '));
     if (order.deliveryAddress) kv('عنوان التوصيل', ar(order.deliveryAddress));
     if (order.deliveryPerson) kv('مندوب التوصيل', ar(order.deliveryPerson));
+    if (order.deliveryAgentName) kv('مندوب التوصيل المسجل', ar(order.deliveryAgentName));
+    if (order.deliveryAgentId) kv('حالة الدفع', order.paymentStatus === 'paid' ? 'مدفوع' : 'معلق');
     if (order.cashierName) kv('كاشير', ar(order.cashierName));
 
     divider();

@@ -5,7 +5,7 @@ import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 import { HttpError } from '../middleware/errorHandler.js';
 
-const COLLECTIONS = ['restaurants', 'users', 'super_admins', 'licenses', 'devices', 'login_sessions', 'audit_logs'];
+const COLLECTIONS = ['restaurants', 'users', 'super_admins', 'licenses', 'devices', 'login_sessions'];
 
 let _db = null;
 let _mode = null;

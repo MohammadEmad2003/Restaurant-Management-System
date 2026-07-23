@@ -1,5 +1,4 @@
 import { repo } from '../repositories/index.js';
-import { recordAudit } from '../middleware/audit.js';
 import { HttpError } from '../middleware/errorHandler.js';
 
 export const loyaltyService = {
@@ -30,7 +29,6 @@ export const loyaltyService = {
       loyaltyPoints: (client.loyaltyPoints || 0) - points,
     });
     await repo('loyaltyTx').create({ clientId, points: -points, type: 'redeem', date: new Date().toISOString().slice(0, 10), restaurantId: user?.restaurantId });
-    await recordAudit(user, 'LOYALTY_REDEEMED', 'clients', clientId, { after: updated });
     return { points: updated.loyaltyPoints };
   },
 };

@@ -189,25 +189,25 @@ export function SupplierSelect({ value, onChange, placeholder }) {
 }
 
 /**
- * Cascading location picker: choose a governorate, then an area within it.
- * `tree` is the { governorate: [areas] } map from /locations/tree.
+ * Cascading location picker: choose a city, then an area/district within it.
+ * `tree` is the { city: [areas] } map from /locations/tree.
  */
-export function LocationSelect({ tree = {}, governorate, area, onChange }) {
+export function LocationSelect({ tree = {}, city, area, onChange }) {
   const { t } = useTranslation();
-  const govs = Object.keys(tree).sort((a, b) => a.localeCompare(b));
-  const areas = tree[governorate] || [];
+  const cities = Object.keys(tree).sort((a, b) => a.localeCompare(b));
+  const areas = tree[city] || [];
   return (
     <div className="row" style={{ gap: 12 }}>
       <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-        <label>{t('locations.governorate', 'Governorate')}</label>
-        <select className="select" value={governorate || ''} onChange={(e) => onChange({ governorate: e.target.value, area: '' })}>
-          <option value="">{t('locations.selectGov', 'Select governorate…')}</option>
-          {govs.map((g) => <option key={g} value={g}>{g}</option>)}
+        <label>{t('locations.city', 'City')}</label>
+        <select className="select" value={city || ''} onChange={(e) => onChange({ city: e.target.value, area: '' })}>
+          <option value="">{t('locations.selectCity', 'Select city…')}</option>
+          {cities.map((g) => <option key={g} value={g}>{g}</option>)}
         </select>
       </div>
       <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-        <label>{t('locations.area', 'Area / Place')}</label>
-        <select className="select" value={area || ''} onChange={(e) => onChange({ governorate, area: e.target.value })} disabled={!governorate}>
+        <label>{t('locations.area', 'Area / District')}</label>
+        <select className="select" value={area || ''} onChange={(e) => onChange({ city, area: e.target.value })} disabled={!city}>
           <option value="">{t('locations.selectArea', 'Select area…')}</option>
           {areas.map((a) => <option key={a} value={a}>{a}</option>)}
         </select>

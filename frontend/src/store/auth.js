@@ -129,7 +129,13 @@ export const useAuth = create((set, get) => ({
 
   async heartbeat() {
     if (!get().token) return;
-    try { await api.post('/auth/heartbeat'); } catch { /* next heartbeat retries; logout is handled by the 401 interceptor */ }
+    try {
+      const { data } = await api.post('/auth/heartbeat');
+      if (data?.offlineLicense) {
+        localStorage.setItem('offlineLicense', JSON.stringify(data.offlineLicense));
+        set({ offlineLicense: data.offlineLicense });
+      }
+    } catch { /* next heartbeat retries; logout is handled by the 401 interceptor */ }
   },
 
   logout() {

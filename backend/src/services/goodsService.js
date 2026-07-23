@@ -1,6 +1,5 @@
 import { repo } from '../repositories/index.js';
 import { createCrudService } from './baseService.js';
-import { recordAudit } from '../middleware/audit.js';
 import { HttpError } from '../middleware/errorHandler.js';
 
 const base = createCrudService('goods', { entityName: 'good' });
@@ -34,7 +33,6 @@ export const goodsService = {
       refId: id, date: new Date().toISOString().slice(0, 10),
       restaurantId: user?.restaurantId,
     });
-    await recordAudit(user, 'GOOD_PURCHASED', 'goods', id, { after: updated });
     return updated;
   },
 

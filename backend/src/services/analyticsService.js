@@ -89,7 +89,7 @@ export const analyticsService = {
 
   /**
    * Revenue, order count and gross profit grouped by the customer's location
-   * (governorate · area). Orders snapshot the location at checkout; older orders
+   * (city · area). Orders snapshot the location at checkout; older orders
    * fall back to the linked client record. `from`/`to` bound the date range.
    */
   async byLocation({ from, to } = {}, user) {
@@ -112,11 +112,11 @@ export const analyticsService = {
     for (const o of orders.filter((x) => x.status === 'completed')) {
       if (!(o.orderDate >= fromTs && o.orderDate < toTs)) continue;
       const client = o.clientId ? clientById[o.clientId] : null;
-      const governorate = o.governorate || client?.governorate || '';
+      const city = o.city || client?.city || '';
       const area = o.area || client?.area || '';
-      const name = area ? `${governorate ? governorate + ' · ' : ''}${area}` : (governorate || 'Walk-in / Unknown');
+      const name = area ? `${city ? city + ' · ' : ''}${area}` : (city || 'Walk-in / Unknown');
       const key = name;
-      const b = (byArea[key] ||= { name, governorate, area, orders: 0, revenue: 0, profit: 0 });
+      const b = (byArea[key] ||= { name, city, area, orders: 0, revenue: 0, profit: 0 });
       b.orders += 1;
       b.revenue += o.totalPrice || 0;
       for (const line of o.products || []) {

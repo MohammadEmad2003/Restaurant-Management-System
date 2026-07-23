@@ -1,6 +1,5 @@
 import { repo } from '../repositories/index.js';
 import { secureStore } from '../repositories/secureStore.js';
-import { recordAudit } from '../middleware/audit.js';
 import { HttpError } from '../middleware/errorHandler.js';
 import { verifyPassword, sanitize } from '../utils/hash.js';
 import { shiftService } from './shiftService.js';
@@ -94,7 +93,6 @@ export const attendanceService = {
       status: 'present',
       restaurantId: user?.restaurantId,
     });
-    await recordAudit(user, 'CLOCK_IN', 'attendance', record.id, { after: record });
     return record;
   },
 
@@ -134,9 +132,7 @@ export const attendanceService = {
       const schedule = await shiftService.scheduleFor(workerId, new Date(open.checkInTime).getDay(), user);
       overtimeHours = Math.max(0, +(totalHours - shiftLengthHours(schedule)).toFixed(2));
     }
-    const updated = await repo('attendance').update(open.id, { checkOutTime, totalHours, overtimeHours });
-    await recordAudit(user, 'CLOCK_OUT', 'attendance', open.id, { after: updated });
-    return updated;
+    return repo('attendance').update(open.id, { checkOutTime, totalHours, overtimeHours });
   },
 
   /** Admin: excuse (or un-excuse) a late clock-in, optionally tweak the minutes. */
@@ -149,9 +145,7 @@ export const attendanceService = {
     const patch = {};
     if (excused !== undefined) patch.excused = !!excused;
     if (lateMinutes !== undefined) patch.lateMinutes = Math.max(0, Number(lateMinutes) || 0);
-    const updated = await repo('attendance').update(id, patch);
-    await recordAudit(user, 'ATTENDANCE_EXCUSED', 'attendance', id, { before: rec, after: updated });
-    return updated;
+    return repo('attendance').update(id, patch);
   },
 
   /** Admin: apply/remove overtime on one record, or override its hours. */
@@ -164,9 +158,7 @@ export const attendanceService = {
     const patch = {};
     if (approved !== undefined) patch.overtimeApproved = !!approved;
     if (overtimeHours !== undefined) patch.overtimeHours = Math.max(0, Number(overtimeHours) || 0);
-    const updated = await repo('attendance').update(id, patch);
-    await recordAudit(user, 'ATTENDANCE_OVERTIME', 'attendance', id, { before: rec, after: updated });
-    return updated;
+    return repo('attendance').update(id, patch);
   },
 
   /** Admin: apply/remove overtime for every record in a month (or a single day). */
@@ -181,7 +173,6 @@ export const attendanceService = {
       await repo('attendance').update(r.id, { overtimeApproved: !!approved });
       count += 1;
     }
-    await recordAudit(user, 'ATTENDANCE_OVERTIME_BULK', 'attendance', null, { after: { approved, count, month, date } });
     return { updated: count, approved: !!approved };
   },
 
@@ -210,7 +201,6 @@ export const attendanceService = {
       });
       created.push(rec);
     }
-    await recordAudit(user, 'ATTENDANCE_ABSENCES', 'attendance', null, { after: { date: day, count: created.length } });
     return { date: day, marked: created.length };
   },
 

@@ -1,12 +1,25 @@
 import { repo } from '../repositories/index.js';
-import { recordAudit } from '../middleware/audit.js';
 import { HttpError } from '../middleware/errorHandler.js';
 import { shortCode } from '../utils/ids.js';
 import { config } from '../config/index.js';
 import { settingsService } from './settingsService.js';
 import { evaluateLoyaltyReward } from './loyaltyEngine.js';
+import { withLock } from '../utils/lock.js';
+import { secureStore } from '../repositories/secureStore.js';
+import { cashLedgerService } from './cashLedgerService.js';
+import { cashierShiftService } from './cashierShiftService.js';
 
+const store = secureStore();
 const today = () => new Date().toISOString().slice(0, 10);
+
+// The JWT payload carries only sub/restaurantId/role (no display name), so
+// "Created By" on an order/pending-payment must be resolved from the users
+// table itself when the caller doesn't pass one explicitly.
+async function resolveCashierName(user) {
+  if (!user?.sub) return null;
+  const record = await store.findOne('users', { id: user.sub });
+  return record?.username || null;
+}
 
 async function priceLines(lines, user) {
   const products = await repo('products').getAll({ restaurantId: user?.restaurantId });
@@ -66,7 +79,7 @@ export const orderService = {
     // history stay correct even if the client record later changes or is offline.
     let clientName = data.clientName || 'Walk-in';
     let clientPhone = data.clientPhone || null;
-    let governorate = data.governorate || '';
+    let city = data.city || '';
     let area = data.area || '';
     if (data.clientId) {
       const client = await repo('clients').getById(data.clientId);
@@ -76,10 +89,38 @@ export const orderService = {
       if (client) {
         clientName = client.name || clientName;
         clientPhone = (client.phoneNumbers || [])[0] || clientPhone;
-        governorate = governorate || client.governorate || '';
+        city = city || client.city || '';
         area = area || client.area || '';
       }
     }
+
+    // A registered delivery agent (as opposed to the free-text deliveryPerson
+    // name) must belong to the same restaurant — the same IDOR guard as clientId.
+    let deliveryAgentName = '';
+    if (data.deliveryAgentId) {
+      const agent = await repo('deliveryAgents').getById(data.deliveryAgentId);
+      if (!agent || agent.restaurantId !== user?.restaurantId) {
+        throw new HttpError(400, 'Invalid delivery agent');
+      }
+      deliveryAgentName = agent.name;
+    }
+    // Delivery-agent orders carry an explicit paymentTiming that alone decides
+    // paymentStatus — PAID_NOW means the frontend has already gated order
+    // creation behind an explicit "money received" confirmation (see
+    // Orders.jsx), so by the time this runs the order genuinely is paid.
+    // END_OF_DAY and UNPAID_PRINTED both mean the agent hasn't handed the cash
+    // back yet — the order is real but the payment is only "expected", never
+    // conflated with money actually being in the drawer. They're kept as
+    // distinct values (not collapsed into one) because they represent
+    // different business intent even though both resolve to the same
+    // paymentStatus today. Every other order (no agent) keeps today's
+    // implicit "paid".
+    const paymentTiming = data.deliveryAgentId
+      ? (['PAID_NOW', 'UNPAID_PRINTED'].includes(data.paymentTiming) ? data.paymentTiming : 'END_OF_DAY')
+      : null;
+    const paymentStatus = data.deliveryAgentId
+      ? (paymentTiming === 'PAID_NOW' ? 'paid' : 'pending')
+      : 'paid';
 
     // Delivery fee: applied to phone/delivery orders, waived for walk-ins. The
     // fee amount is controlled by the admin in Settings.
@@ -93,10 +134,15 @@ export const orderService = {
       ...data,
       clientName,
       clientPhone,
-      governorate,
+      city,
       area,
       deliveryAddress: data.deliveryAddress || '',
       deliveryPerson: data.deliveryPerson || '', // name of the delivery man, printed on the receipt
+      deliveryAgentId: data.deliveryAgentId || null,
+      deliveryAgentName,
+      paymentStatus,
+      paymentTiming,
+      paidAt: paymentStatus === 'paid' ? new Date().toISOString() : null,
       walkIn,
       isDelivery,
       deliveryFee,
@@ -105,17 +151,35 @@ export const orderService = {
       products: priced,
       totalPrice: grandTotal,
       cashierId: data.cashierId || user?.sub,
-      cashierName: data.cashierName || user?.name || null,
+      cashierName: data.cashierName || await resolveCashierName(user),
       orderDate: data.orderDate || Date.now(),
       status: data.status || 'completed',
       restaurantId: user?.restaurantId,
     });
 
+    // Real cash received at the moment of order creation (a normal paid cash
+    // order, or a delivery-agent order marked Paid Now) — record it in the
+    // Restaurant Cash Ledger immediately. END_OF_DAY/UNPAID_PRINTED orders are
+    // still pending, so no ledger entry exists for them until they're
+    // actually settled later (see markPaid). cashierShiftId is an optional
+    // attribution, never a precondition — the cashier need not have an open
+    // shift for this cash to count toward the Restaurant's balance.
+    if (order.paymentStatus === 'paid' && order.status !== 'cancelled' && (order.paymentMethod || 'cash') === 'cash') {
+      const openShift = await cashierShiftService.openShiftFor(order.cashierId, user);
+      await cashLedgerService.record({
+        restaurantId: user?.restaurantId,
+        amount: order.totalPrice,
+        transactionType: order.deliveryAgentId ? 'DELIVERY_AGENT_PAID_NOW' : 'CASH_SALE',
+        orderId: order.id,
+        cashierShiftId: openShift?.id || null,
+        createdByUserId: order.cashierId,
+      });
+    }
+
     let lowStock = [];
     if (order.status === 'completed') {
       lowStock = await this._onComplete(order, user);
     }
-    await recordAudit(user, 'ORDER_CREATED', 'orders', order.id, { after: order });
     return { ...order, lowStock };
   },
 
@@ -166,7 +230,6 @@ export const orderService = {
     if (before.status !== 'completed' && updated.status === 'completed') {
       await this._onComplete(updated, user);
     }
-    await recordAudit(user, 'ORDER_UPDATED', 'orders', id, { before, after: updated });
     return updated;
   },
 
@@ -176,13 +239,103 @@ export const orderService = {
     if (user?.restaurantId && before.restaurantId && before.restaurantId !== user.restaurantId) {
       throw new HttpError(404, 'order not found');
     }
-    const updated = await repo('orders').update(id, { status: 'cancelled', restaurantId: before.restaurantId });
-    await recordAudit(user, 'ORDER_CANCELLED', 'orders', id, { before, after: updated });
-    return updated;
+    return repo('orders').update(id, { status: 'cancelled', restaurantId: before.restaurantId });
   },
 
   async setStatus(id, status, user) {
     return this.update(id, { status }, user);
+  },
+
+  /** Delivery-agent orders, with optional agent/date/search/status filters —
+   * backs the Pending Payments page. Defaults to the pending queue; pass
+   * `status: 'paid'` or `'all'` to also see recently-settled agent orders
+   * (e.g. an end-of-day audit view) without a second, duplicate endpoint. */
+  async listPendingPayments({ agentId, dateFrom, dateTo, q, status = 'pending' } = {}, user) {
+    let rows = await repo('orders').getAll({ restaurantId: user?.restaurantId });
+    // This page is specifically the delivery-agent payment queue — a normal
+    // order (no agent) is never financially "pending" and has no business here.
+    rows = rows.filter((o) => !!o.deliveryAgentId);
+    if (status !== 'all') rows = rows.filter((o) => (o.paymentStatus || 'paid') === status);
+    if (agentId) rows = rows.filter((o) => o.deliveryAgentId === agentId);
+    if (dateFrom) rows = rows.filter((o) => (o.orderDate || 0) >= new Date(dateFrom).getTime());
+    if (dateTo) rows = rows.filter((o) => (o.orderDate || 0) <= new Date(dateTo).getTime());
+    if (q) {
+      const term = q.toLowerCase();
+      rows = rows.filter((o) =>
+        (o.invoiceNo || '').toLowerCase().includes(term) ||
+        (o.id || '').toLowerCase().includes(term) ||
+        (o.clientName || '').toLowerCase().includes(term));
+    }
+    return rows.sort((a, b) => (b.orderDate || 0) - (a.orderDate || 0));
+  },
+
+  /**
+   * Settle a single pending order. Locked per-order and re-checks
+   * `paymentStatus === 'pending'` right before flipping it, so two concurrent
+   * settle attempts (double-click, two tabs, two staff members) can never both
+   * succeed — the loser gets a clean 409 instead of silently re-stamping
+   * `paidAt` and letting the same cash get counted twice by the drawer.
+   */
+  async markPaid(id, user) {
+    return withLock(`order-settle-${id}`, async () => {
+      const before = await repo('orders').getById(id);
+      if (!before) throw new HttpError(404, 'order not found');
+      if (user?.restaurantId && before.restaurantId && before.restaurantId !== user.restaurantId) {
+        throw new HttpError(404, 'order not found');
+      }
+      if ((before.paymentStatus || 'paid') !== 'pending') {
+        throw new HttpError(409, 'This order has already been settled');
+      }
+      const settled = await repo('orders').update(id, {
+        paymentStatus: 'paid',
+        paidAt: new Date().toISOString(),
+        restaurantId: before.restaurantId,
+      });
+      // Real cash is received exactly now — this is the single, lock-guarded
+      // place a pending order can ever transition to paid, so this runs
+      // exactly once no matter how many concurrent settlement attempts race
+      // here. The settling cashier need not have an open shift of their own
+      // for this cash to count toward the Restaurant's balance.
+      if ((before.paymentMethod || 'cash') === 'cash') {
+        const openShift = await cashierShiftService.openShiftFor(user?.sub, user);
+        await cashLedgerService.record({
+          restaurantId: before.restaurantId,
+          amount: before.totalPrice,
+          transactionType: 'PENDING_PAYMENT_SETTLEMENT',
+          orderId: id,
+          cashierShiftId: openShift?.id || null,
+          createdByUserId: user?.sub,
+        });
+      }
+      return settled;
+    });
+  },
+
+  /** Settle many pending orders at once — either an explicit list of order ids,
+   * or every pending order for one delivery agent. Idempotent: an order
+   * already settled by someone else in the meantime is silently skipped
+   * (not double-counted, not treated as a failure of the whole batch). */
+  async bulkMarkPaid({ orderIds, agentId } = {}, user) {
+    let targets;
+    if (Array.isArray(orderIds) && orderIds.length) {
+      targets = orderIds;
+    } else if (agentId) {
+      const pending = await this.listPendingPayments({ agentId, status: 'pending' }, user);
+      targets = pending.map((o) => o.id);
+    } else {
+      throw new HttpError(400, 'Provide orderIds or agentId');
+    }
+    const settled = [];
+    let skipped = 0;
+    for (const id of targets) {
+      try {
+        settled.push(await this.markPaid(id, user));
+      } catch (err) {
+        if (err instanceof HttpError && err.status === 409) { skipped += 1; continue; }
+        throw err;
+      }
+    }
+    return { settled: settled.length, skipped, orders: settled };
   },
 };
 

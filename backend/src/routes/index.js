@@ -10,6 +10,8 @@ import { authRateLimit } from '../middleware/rateLimit.js';
 
 import { authService } from '../services/authService.js';
 import { sessionService } from '../services/sessionService.js';
+import { deviceService } from '../services/deviceService.js';
+import { licenseService } from '../services/licenseService.js';
 import { buildFingerprint } from '../utils/device.js';
 import superAdminRoutes from './superAdmin.js';
 import licenseRoutes from './license.js';
@@ -35,7 +37,7 @@ import { cashierShiftService } from '../services/cashierShiftService.js';
 import { supplierService } from '../services/supplierService.js';
 import { settingsService } from '../services/settingsService.js';
 import { createCrudService } from '../services/baseService.js';
-import { auditService } from '../services/auditService.js';
+import { deliveryAgentService } from '../services/deliveryAgentService.js';
 import { syncEngine } from '../sync/syncEngine.js';
 import { repo } from '../repositories/index.js';
 
@@ -90,9 +92,29 @@ router.post('/auth/logout', auth, h(async (req, res) => {
 }));
 // Keeps a session's lastSeenAt fresh so sessionSweep doesn't release its
 // concurrent-cashier-session slot while the client is still actively in use.
+// Also re-validates the device online and refreshes its offline license, so a
+// long-lived session's rolling-validation window keeps rolling forward instead
+// of only refreshing at the (rare) next full login.
 router.post('/auth/heartbeat', auth, h(async (req, res) => {
   if (req.user?.jti) await sessionService.heartbeat(req.user.jti);
-  res.json({ ok: true });
+
+  let offlineLicense = null;
+  if (req.user?.type === 'user' && req.user.deviceId && req.user.restaurantId) {
+    await deviceService.updateValidationTimestamp(req.user.deviceId);
+    const license = await licenseService.getLicenseByRestaurant(req.user.restaurantId);
+    if (license) {
+      offlineLicense = authService.generateOfflineLicense({
+        restaurantId: req.user.restaurantId,
+        licenseId: license.id,
+        deviceId: req.user.deviceId,
+        fingerprint: req.user.fingerprint,
+        expirationDate: license.expirationDate,
+        offlineDays: license.offlineDays,
+        validationIntervalHours: license.validationIntervalHours,
+      });
+    }
+  }
+  res.json({ ok: true, offlineLicense });
 }));
 
 /* ───────────── SUPER ADMIN & LICENSE MOUNTS ───────────── */
@@ -136,12 +158,20 @@ router.patch('/attendance/:id/overtime', auth, rbac('ADMIN'), h(async (req, res)
 router.get('/clients', auth, h(async (req, res) => res.json(await clientService.list(req.query, req.user))));
 router.get('/clients/search', auth, h(async (req, res) => res.json(await clientService.search(req.query, req.user))));
 router.get('/clients/filter', auth, h(async (req, res) => res.json(await clientService.filter(req.query, req.user))));
+router.get('/clients/lookup', auth, h(async (req, res) => res.json(await clientService.lookupByPhone(req.query.phone, req.user))));
 router.get('/clients/:id', auth, h(async (req, res) => res.json(await clientService.get(req.params.id, req.user))));
 router.get('/clients/:id/history', auth, h(async (req, res) => res.json(await clientService.history(req.params.id, req.user))));
 router.post('/clients', auth, validateBody('clients'), h(async (req, res) => res.status(201).json(await clientService.create(req.body, req.user))));
 router.put('/clients/:id', auth, validateBody('clients', { partial: true }), h(async (req, res) => res.json(await clientService.update(req.params.id, req.body, req.user))));
+router.delete('/clients/:id', auth, h(async (req, res) => res.json(await clientService.remove(req.params.id, req.user))));
 router.post('/clients/:id/phones', auth, h(async (req, res) => res.json(await clientService.addPhone(req.params.id, req.body.phone, req.user))));
 router.post('/clients/:id/addresses', auth, h(async (req, res) => res.json(await clientService.addAddress(req.params.id, req.body.address, req.user))));
+
+/* ──────────────────── DELIVERY AGENTS ──────────────────── */
+router.get('/delivery-agents', auth, h(async (req, res) => res.json(await deliveryAgentService.list(req.query, req.user))));
+router.post('/delivery-agents', auth, rbac('ADMIN'), h(async (req, res) => res.status(201).json(await deliveryAgentService.create(req.body, req.user))));
+router.put('/delivery-agents/:id', auth, rbac('ADMIN'), h(async (req, res) => res.json(await deliveryAgentService.update(req.params.id, req.body, req.user))));
+router.delete('/delivery-agents/:id', auth, rbac('ADMIN'), h(async (req, res) => res.json(await deliveryAgentService.remove(req.params.id, req.user))));
 
 /* ───────────────────────── PRODUCTS ────────────────────── */
 router.get('/products', auth, h(async (req, res) => res.json(await productService.list(req.query, req.user))));
@@ -168,11 +198,14 @@ router.get('/goods-checks/reports/waste', auth, rbac('ADMIN'), h(async (req, res
 
 /* ───────────────────────── ORDERS ──────────────────────── */
 router.get('/orders', auth, h(async (req, res) => res.json(await orderService.list(req.query, req.user))));
+router.get('/orders/pending-payments', auth, h(async (req, res) => res.json(await orderService.listPendingPayments(req.query, req.user))));
+router.patch('/orders/bulk-mark-paid', auth, h(async (req, res) => res.json(await orderService.bulkMarkPaid(req.body, req.user))));
 router.get('/orders/:id', auth, h(async (req, res) => res.json(await orderService.get(req.params.id, req.user))));
 router.post('/orders', auth, validateBody('orders'), h(async (req, res) => res.status(201).json(await orderService.create(req.body, req.user))));
 router.put('/orders/:id', auth, h(async (req, res) => res.json(await orderService.update(req.params.id, req.body, req.user))));
 router.patch('/orders/:id/cancel', auth, h(async (req, res) => res.json(await orderService.cancel(req.params.id, req.user))));
 router.patch('/orders/:id/status', auth, h(async (req, res) => res.json(await orderService.setStatus(req.params.id, req.body.status, req.user))));
+router.patch('/orders/:id/mark-paid', auth, h(async (req, res) => res.json(await orderService.markPaid(req.params.id, req.user))));
 router.get('/orders/:id/invoice.pdf', auth, h(async (req, res) => {
   const order = await orderService.get(req.params.id, req.user);
   const settings = (await repo('settings').getAll({ restaurantId: req.user?.restaurantId }))[0] || {};
@@ -305,22 +338,20 @@ router.delete('/shifts/:id', auth, rbac('ADMIN'), h(async (req, res) => res.json
 /* ──────────────── CASHIER CASH-DRAWER SHIFTS ───────────── */
 // Cashier-operated: open a till, reconcile counted vs expected cash, hand over to next cashier.
 router.get('/cashier-shifts/current', auth, rbac('CASHIER'), h(async (req, res) => res.json(await cashierShiftService.current(req.user))));
+// Restaurant-wide authoritative cash-drawer total — open to any authenticated
+// restaurant role (ADMIN and CASHIER both need the same number in POS/Dashboard);
+// already scoped to req.user.restaurantId internally, so no cross-tenant exposure.
+router.get('/cashier-shifts/current-all', auth, h(async (req, res) => res.json(await cashierShiftService.currentAll(req.user))));
 router.get('/cashier-shifts', auth, rbac('CASHIER'), h(async (req, res) => res.json(await cashierShiftService.list(req.query, req.user))));
 router.post('/cashier-shifts/open', auth, rbac('CASHIER'), h(async (req, res) => res.status(201).json(await cashierShiftService.open(req.user, req.body))));
 router.post('/cashier-shifts/:id/close', auth, rbac('CASHIER'), h(async (req, res) => res.json(await cashierShiftService.close(req.params.id, req.user, req.body))));
 
 /* ──────────────────────── LOCATIONS ────────────────────── */
-// Admin-managed governorates + areas used for customer profiling & profit-by-area.
+// Admin-managed cities + areas used for customer profiling & profit-by-area.
 router.get('/locations', auth, h(async (req, res) => res.json(await locationService.list(req.query, req.user))));
 router.get('/locations/tree', auth, h(async (req, res) => res.json(await locationService.tree(req.user))));
 router.post('/locations', auth, rbac('ADMIN'), validateBody('locations'), h(async (req, res) => res.status(201).json(await locationService.create(req.body, req.user))));
 router.delete('/locations/:id', auth, rbac('ADMIN'), h(async (req, res) => res.json(await locationService.remove(req.params.id, req.user))));
-
-/* ──────────────────────── AUDIT LOGS ───────────────────── */
-router.get('/audit-logs', auth, rbac('ADMIN'), h(async (req, res) => {
-  const logs = await auditService.listByRestaurant(req.user.restaurantId);
-  res.json(logs.slice(0, 500));
-}));
 
 /* ──────────────────────── SETTINGS ─────────────────────── */
 router.get('/settings', auth, h(async (req, res) => res.json(await settingsService.get(req.user))));

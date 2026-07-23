@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Menu, Search, Sun, Moon, Languages, LogOut, Wifi, WifiOff } from 'lucide-react';
+import { Menu, Search, Sun, Moon, Languages, LogOut, Wifi, WifiOff, Wallet, Clock } from 'lucide-react';
 import { useAuth } from '../store/auth.js';
 import { useUI } from '../store/ui.js';
+import { usePosStats } from '../store/posStats.js';
 import { api } from '../api/client.js';
 import { Avatar } from '../components/ui.jsx';
+import { money } from '../utils/format.js';
 
 export default function Topbar() {
   const { t } = useTranslation();
@@ -12,6 +14,14 @@ export default function Topbar() {
   const { theme, toggleTheme, toggleLang, toggleSidebar, lang } = useUI();
   const [online, setOnline] = useState(false);
   const [menu, setMenu] = useState(false);
+  // Persistently mounted across every page (unlike per-route components), so
+  // these badges reflect the shared Cash Drawer/Pending Payments store the
+  // instant it's updated — e.g. right after a settlement on the Pending
+  // Payments page — with no navigation or remount required to see it.
+  const cashDrawerTotal = usePosStats((s) => s.cashDrawerTotal);
+  const pendingPaymentsCount = usePosStats((s) => s.pendingPaymentsCount);
+  const refreshAllStats = usePosStats((s) => s.refreshAll);
+  const isSuperAdmin = user?.role === 'super_admin';
 
   useEffect(() => {
     let on = true;
@@ -20,6 +30,10 @@ export default function Topbar() {
     const id = setInterval(ping, 12000);
     return () => { on = false; clearInterval(id); };
   }, []);
+
+  useEffect(() => {
+    if (!isSuperAdmin) refreshAllStats();
+  }, [isSuperAdmin, refreshAllStats]);
 
   return (
     <header style={{
@@ -36,6 +50,17 @@ export default function Topbar() {
       </div>
 
       <div className="spacer" />
+
+      {cashDrawerTotal != null && (
+        <span className="badge badge--brand" title={t('orders.cashInDrawer', 'Cash in Drawer')}>
+          <Wallet size={13} /> {money(cashDrawerTotal)}
+        </span>
+      )}
+      {pendingPaymentsCount != null && (
+        <span className={`badge badge--${pendingPaymentsCount > 0 ? 'warning' : 'brand'}`} title={t('pendingPayments.title', 'Pending Payments')}>
+          <Clock size={13} /> {pendingPaymentsCount}
+        </span>
+      )}
 
       <span className={`badge badge--${online ? 'success' : 'warning'}`} title="Connectivity / sync mode">
         {online ? <Wifi size={13} /> : <WifiOff size={13} />}

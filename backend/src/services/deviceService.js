@@ -86,6 +86,11 @@ export const deviceService = {
     return rows.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   },
 
+  async listByUser(userId) {
+    const rows = await store.findAll('devices', { userId });
+    return rows.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  },
+
   async validateDevice(deviceId, fingerprint, restaurantId) {
     const device = await store.findOne('devices', { id: deviceId });
     if (!device) throw new HttpError(401, 'Device not registered');

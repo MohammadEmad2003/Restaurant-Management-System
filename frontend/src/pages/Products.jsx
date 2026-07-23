@@ -134,7 +134,7 @@ export default function Products() {
           return (
             <div key={idx} className="row" style={{ gap: 8, marginBottom: 8 }}>
               <select className="select" style={{ flex: 2 }} value={ing.goodId} onChange={(e) => setIngredient(idx, { goodId: e.target.value })}>
-                {(goods || []).map((gd) => <option key={gd.id} value={gd.id}>{shortName(gd.name, lang)} ({gd.unit})</option>)}
+                {(goods || []).map((gd) => <option key={gd.id} value={gd.id}>{shortName(gd.name, lang)} ({t(`inventory.units.${gd.unit}`, gd.unit)})</option>)}
               </select>
               <input className="input" type="number" step="any" style={{ width: 90 }} value={ing.quantityRequired}
                 onChange={(e) => setIngredient(idx, { quantityRequired: e.target.value })} />

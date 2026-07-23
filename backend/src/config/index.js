@@ -62,7 +62,7 @@ export const config = {
 const FEATURE_KEYS = [
   'dashboard', 'orders', 'kitchen', 'products', 'inventory', 'goodsCheck', 'clients',
   'loyalty', 'reservations', 'clock', 'workers', 'attendance', 'scheduling',
-  'finance', 'reports', 'audit', 'settings', 'sync', 'complaints', 'pettyCash', 'rents', 'cashAdvances',
+  'finance', 'reports', 'settings', 'sync', 'complaints', 'pettyCash', 'rents', 'cashAdvances', 'pendingPayments',
 ];
 const featureOn = (key) => {
   const v = process.env[`FEATURE_${key.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase()}`];

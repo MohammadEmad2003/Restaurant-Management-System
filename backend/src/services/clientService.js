@@ -4,11 +4,58 @@ import { HttpError } from '../middleware/errorHandler.js';
 
 const base = createCrudService('clients', { entityName: 'client' });
 
+/** Digits-only comparison so "010 1234 5678" and "01012345678" match. */
+const normalizePhone = (p) => String(p || '').replace(/\D/g, '');
+
+const notDeleted = (rows) => rows.filter((c) => c.status !== 'deleted');
+
 export const clientService = {
   ...base,
 
+  async list(filter, user) {
+    return notDeleted(await base.list(filter, user));
+  },
+
+  /** Create a client, but if one with the same phone already exists in this
+   * restaurant, return the existing record instead of creating a duplicate. */
+  async create(data, user) {
+    const phone = (data.phoneNumbers || [])[0];
+    if (phone) {
+      const existing = await this._findByPhone(phone, user);
+      if (existing) return existing;
+    }
+    return base.create(data, user);
+  },
+
+  /** Look up a single client by phone number within the caller's restaurant —
+   * used by the POS to decide whether to load an existing customer or offer
+   * to create a new one. */
+  async lookupByPhone(phone, user) {
+    if (!phone) return null;
+    return this._findByPhone(phone, user);
+  },
+
+  async _findByPhone(phone, user) {
+    const target = normalizePhone(phone);
+    if (!target) return null;
+    const rows = notDeleted(await repo('clients').getAll({ restaurantId: user?.restaurantId }));
+    return rows.find((c) => (c.phoneNumbers || []).some((p) => normalizePhone(p) === target)) || null;
+  },
+
+  /** Soft delete — orders keep referencing this clientId for history, the
+   * record just stops showing up in lists/search/lookup. */
+  async remove(id, user) {
+    const before = await repo('clients').getById(id);
+    if (!before) throw new HttpError(404, 'client not found');
+    if (user?.restaurantId && before.restaurantId && before.restaurantId !== user.restaurantId) {
+      throw new HttpError(404, 'client not found');
+    }
+    await repo('clients').update(id, { status: 'deleted' });
+    return { ok: true };
+  },
+
   async search({ phone, name } = {}, user) {
-    const rows = await repo('clients').getAll({ restaurantId: user?.restaurantId });
+    const rows = notDeleted(await repo('clients').getAll({ restaurantId: user?.restaurantId }));
     return rows.filter((c) => {
       const phoneMatch = phone
         ? (c.phoneNumbers || []).some((p) => String(p).includes(phone))
@@ -38,10 +85,10 @@ export const clientService = {
     return base.update(id, { addresses }, user);
   },
 
-  /** Advanced filter: governorate, visit count range, total spent range, sort. */
-  async filter({ governorate, minVisits, maxVisits, minSpent, maxSpent, sortBy } = {}, user) {
-    let rows = await repo('clients').getAll({ restaurantId: user?.restaurantId });
-    if (governorate) rows = rows.filter((c) => c.governatorate === governorate);
+  /** Advanced filter: city, visit count range, total spent range, sort. */
+  async filter({ city, minVisits, maxVisits, minSpent, maxSpent, sortBy } = {}, user) {
+    let rows = notDeleted(await repo('clients').getAll({ restaurantId: user?.restaurantId }));
+    if (city) rows = rows.filter((c) => c.city === city);
     if (minVisits != null) rows = rows.filter((c) => (c.visitCount || 0) >= Number(minVisits));
     if (maxVisits != null) rows = rows.filter((c) => (c.visitCount || 0) <= Number(maxVisits));
     if (minSpent != null) rows = rows.filter((c) => (c.totalSpent || 0) >= Number(minSpent));

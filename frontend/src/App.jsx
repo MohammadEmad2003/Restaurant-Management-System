@@ -28,8 +28,8 @@ const Finance = lazy(() => import('./pages/Finance.jsx'));
 const PettyCash = lazy(() => import('./pages/PettyCash.jsx'));
 const Rent = lazy(() => import('./pages/Rent.jsx'));
 const CashAvances = lazy(() => import('./pages/CashAdvances.jsx'));
+const PendingPayments = lazy(() => import('./pages/PendingPayments.jsx'));
 const Reports = lazy(() => import('./pages/Reports.jsx'));
-const AuditLogs = lazy(() => import('./pages/AuditLogs.jsx'));
 const Settings = lazy(() => import('./pages/Settings.jsx'));
 const Sync = lazy(() => import('./pages/Sync.jsx'));
 
@@ -103,8 +103,8 @@ export default function App() {
             <Route path="petty-cash" element={<PettyCash />} />
             <Route path="rents" element={<Rent />} />
             <Route path="cash-advances" element={<CashAvances />} />
+            <Route path="pending-payments" element={<PendingPayments />} />
             <Route path="reports" element={<Protected admin><Reports /></Protected>} />
-            <Route path="audit" element={<Protected admin><AuditLogs /></Protected>} />
             <Route path="settings" element={<Protected admin><Settings /></Protected>} />
             <Route path="sync" element={<Sync />} />
           </Route>

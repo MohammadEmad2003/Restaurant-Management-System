@@ -19,9 +19,9 @@ const COLLECTION_MAP = {
   clients: 'clients', orders: 'orders', loyaltyTx: 'loyaltyTx', kdsTickets: 'kdsTickets',
   attendance: 'attendance', purchases: 'purchases', expenses: 'expenses', salaries: 'salaries',
   goodsChecks: 'goodsChecks', reservations: 'reservations', shifts: 'shifts',
-  auditLogs: 'auditLogs', settings: 'settings',
+  settings: 'settings',
   suppliers: 'suppliers', rents: 'rents', cashAdvances: 'cashAdvances', complaints: 'complaints',
-  cashierShifts: 'cashierShifts',
+  cashierShifts: 'cashierShifts', deliveryAgents: 'deliveryAgents',
 };
 
 export async function seed({ force = false } = {}) {

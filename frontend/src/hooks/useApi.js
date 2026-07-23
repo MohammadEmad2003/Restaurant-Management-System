@@ -1,13 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client.js';
 
-/** Simple GET hook with loading/error/refetch. Pass `initial` to declare the empty shape (e.g. []). */
+/** Simple GET hook with loading/error/refetch. Pass `initial` to declare the empty shape (e.g. []).
+ * Pass a falsy `path` (e.g. conditionally `null`) to skip the request entirely — useful when
+ * which endpoint to call depends on something like the user's role. */
 export function useFetch(path, deps = [], initial = null) {
   const [data, setData] = useState(initial);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!!path);
   const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
+    if (!path) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {

@@ -6,11 +6,12 @@ import { logger } from '../utils/logger.js';
 
 const store = secureStore();
 
+// Note: JWT lifetime is a global setting (config.jwtExpiresInHours), not
+// per-restaurant — it intentionally has no entry here.
 const DEFAULTS = {
   offlineDays: 7,
   maximumDevices: 2,
   validationIntervalHours: 24,
-  jwtExpiresInHours: 24,
   licenseDays: 30,
   maxConcurrentCashierSessions: 1,
   sessionTimeoutMinutes: 30,

@@ -2,7 +2,6 @@ import { repo } from '../repositories/index.js';
 import { createCrudService } from './baseService.js';
 import { settingsService } from './settingsService.js';
 import { cashAdvanceService } from './cashAdvanceService.js';
-import { recordAudit } from '../middleware/audit.js';
 import { HttpError } from '../middleware/errorHandler.js';
 
 const base = createCrudService('salaries', { entityName: 'salary' });
@@ -79,7 +78,6 @@ export const salaryService = {
       const rec = await repo('salaries').create({ ...b, month: m, paid: false, restaurantId: user?.restaurantId });
       created.push(rec);
     }
-    await recordAudit(user, 'SALARY_GENERATED', 'salaries', null, { after: { month: m, count: created.length } });
     return created;
   },
 
@@ -94,9 +92,7 @@ export const salaryService = {
     const bonus = patch.bonus != null ? +patch.bonus : before.bonus || 0;
     const deductions = patch.deductions != null ? +patch.deductions : before.deductions || 0;
     const netPay = +((before.baseSalary || 0) + (before.overtimePay || 0) + bonus - (before.lateDeduction || 0) - deductions).toFixed(2);
-    const updated = await repo('salaries').update(id, { bonus, deductions, netPay, notes: patch.notes ?? before.notes });
-    await recordAudit(user, 'SALARY_ADJUSTED', 'salaries', id, { before, after: updated });
-    return updated;
+    return repo('salaries').update(id, { bonus, deductions, netPay, notes: patch.notes ?? before.notes });
   },
 
   /**
@@ -134,7 +130,6 @@ export const salaryService = {
       refId: updated.workerId, date: new Date().toISOString().slice(0, 10),
       restaurantId: user?.restaurantId,
     });
-    await recordAudit(user, 'SALARY_PAID', 'salaries', id, { after: updated, advancesDeducted: deductedAmount });
     return updated;
   },
 };

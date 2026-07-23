@@ -4,6 +4,7 @@ import { useFetch } from '../hooks/useApi.js';
 import { usePaginated } from '../hooks/usePaginated.js';
 import { api } from '../api/client.js';
 import { useUI } from '../store/ui.js';
+import { usePosStats } from '../store/posStats.js';
 import { PageHeader, Card, DataTable, Badge, Button, Modal, Input, Select, Textarea } from '../components/ui.jsx';
 import { money } from '../utils/format.js';
 
@@ -15,22 +16,33 @@ export default function CashAdvances() {
   const { data: advances, loading, refetch } = useFetch('/cash-advances', [], []);
   const { data: workers } = useFetch('/workers', [], []);
   const confirm = useUI((s) => s.confirm);
+  const refreshCashDrawer = usePosStats((s) => s.refreshCashDrawer);
   const { page, pageSize, totalPages, totalItems, setPage, setPageSize, paginatedData: paginatedAdvances } = usePaginated(advances, 10);
 
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (showModal) setForm({ workerId: '', workerName: '', amount: '', date: new Date().toISOString().slice(0, 10), description: '', notes: '', repaymentMethod: 'salary-deduction' });
   }, [showModal]);
 
   const create = async () => {
+    // Guard against a double-click firing two requests before the modal
+    // closes — a real Cash Ledger deduction must never be created twice.
+    if (saving) return;
+    setSaving(true);
     try {
       await api.post('/cash-advances', { ...form, amount: Number(form.amount) });
       notify(t('cashAdvances.created', 'Cash advance recorded'));
       setShowModal(false);
       refetch();
+      // This is real cash leaving the drawer — update the shared Cash Drawer
+      // figure immediately so the POS badge reflects it without needing a
+      // page navigation/reload.
+      refreshCashDrawer();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+    finally { setSaving(false); }
   };
 
   const setStatus = async (id, status) => {
@@ -102,7 +114,7 @@ export default function CashAdvances() {
               { value: 'cash-reimbursement', label: t('cashAdvances.repay_cash') },
             ]} />
           <Textarea label={t('cashAdvances.notes')} value={form.notes || ''} onChange={(v) => setForm({ ...form, notes: v })} />
-          <Button onClick={create}>{t('common.save')}</Button>
+          <Button onClick={create} disabled={saving}>{t('common.save')}</Button>
         </div>
       </Modal>
     </div>

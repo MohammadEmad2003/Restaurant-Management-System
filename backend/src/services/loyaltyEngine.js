@@ -1,5 +1,4 @@
 import { repo } from '../repositories/index.js';
-import { recordAudit } from '../middleware/audit.js';
 
 /**
  * Automated loyalty engine — evaluates three triggers after an order is completed:
@@ -47,7 +46,7 @@ export async function evaluateLoyaltyReward(order, settings, user) {
 
   // Apply rewards to client
   if (totalPoints > 0) {
-    const updated = await repo('clients').update(clientId, {
+    await repo('clients').update(clientId, {
       loyaltyPoints: (client.loyaltyPoints || 0) + totalPoints,
       visitCount: currentVisits,
     });
@@ -60,13 +59,6 @@ export async function evaluateLoyaltyReward(order, settings, user) {
       date: new Date().toISOString().slice(0, 10),
       restaurantId: client.restaurantId,
     });
-    await recordAudit(
-      { id: order.cashierId || 'system' },
-      'LOYALTY_EARNED',
-      'clients',
-      clientId,
-      { after: updated, reasons },
-    );
   }
 
   return { points: totalPoints, reasons };

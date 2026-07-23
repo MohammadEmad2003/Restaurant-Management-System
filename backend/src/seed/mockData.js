@@ -13,17 +13,17 @@ const dayStr = (ts) => new Date(ts).toISOString().slice(0, 10);
 const monthStr = (ts) => new Date(ts).toISOString().slice(0, 7);
 
 export async function buildMockData() {
-  /* ── Locations (admin-managed governorates + areas) ── */
+  /* ── Locations (admin-managed cities + areas) ── */
   const locationDefs = [
     ['Cairo — القاهرة', ['Maadi — المعادي', 'Nasr City — مدينة نصر', 'Heliopolis — مصر الجديدة', 'Zamalek — الزمالك', 'Shoubra — شبرا']],
     ['Giza — الجيزة', ['Dokki — الدقي', 'Mohandessin — المهندسين', '6th October — السادس من أكتوبر', 'Sheikh Zayed — الشيخ زايد']],
     ['Alexandria — الإسكندرية', ['Smouha — سموحة', 'Miami — ميامي']],
   ];
   const locations = [];
-  for (const [governorate, areas] of locationDefs) {
-    for (const area of areas) locations.push({ id: `LOC-${locations.length + 1}`, governorate, area });
+  for (const [city, areas] of locationDefs) {
+    for (const area of areas) locations.push({ id: `LOC-${locations.length + 1}`, city, area });
   }
-  const areaPool = locations.map((l) => ({ governorate: l.governorate, area: l.area }));
+  const areaPool = locations.map((l) => ({ city: l.city, area: l.area }));
 
   /* ── Workers ── */
   const workerDefs = [
@@ -98,7 +98,7 @@ export async function buildMockData() {
     return {
       id: `CLI-${String(i + 1).padStart(3, '0')}`,
       name, phoneNumbers, addresses,
-      governorate: loc.governorate, area: loc.area,
+      city: loc.city, area: loc.area,
       notes: pick(['VIP customer', 'Prefers extra cheese', 'Allergic to nuts', 'Delivery only', '']),
       loyaltyPoints: 0, totalSpent: 0, visitCount: 0,
       preferences: pick([['No onion'], ['Spicy'], ['Extra sauce'], []]),
@@ -128,11 +128,11 @@ export async function buildMockData() {
         id: `ORD-${dayStr(ts).replace(/-/g, '')}-${k}`,
         invoiceNo: `INV-${String(orders.length + 1).padStart(5, '0')}`,
         clientId: client?.id || null, clientName: client?.name || 'Walk-in',
-        governorate: client?.governorate || '', area: client?.area || '',
+        city: client?.city || '', area: client?.area || '',
         cashierId: cashier.id, orderDate: ts,
         products: lines, totalPrice: total,
         notes: '', paymentMethod: pick(['cash', 'card', 'wallet']),
-        status,
+        status, paymentStatus: 'paid',
       };
       orders.push(order);
 
@@ -240,11 +240,10 @@ export async function buildMockData() {
     }
   }
 
-  /* ── Audit log samples ── */
-  const auditLogs = [
-    { id: 'LOG-1', userId: 'WRK-admin', userName: 'Admin User', action: 'PRODUCT_CREATED', entityType: 'products', entityId: 'PRD-margherita', timestamp: now - 20 * DAY },
-    { id: 'LOG-2', userId: 'WRK-admin', userName: 'Admin User', action: 'GOOD_PURCHASED', entityType: 'goods', entityId: 'GD-cheese', timestamp: now - 3 * DAY },
-    { id: 'LOG-3', userId: 'WRK-cashier', userName: 'Sara Ahmed', action: 'ORDER_CREATED', entityType: 'orders', entityId: orders[0]?.id, timestamp: now - 1 * DAY },
+  /* ── Delivery agents ── */
+  const deliveryAgents = [
+    { id: 'DAG-1', name: 'Mostafa Reda — مصطفى رضا', phone: '+20 112 000 1111', active: true },
+    { id: 'DAG-2', name: 'Sameh Gouda — سامح جودة', phone: '+20 112 000 2222', active: true },
   ];
 
   /* ── Suppliers ── */
@@ -285,7 +284,7 @@ export async function buildMockData() {
   return {
     locations, workers, goods, products, clients, orders, loyaltyTx, kdsTickets,
     attendance, purchases, expenses, salaries, goodsChecks, reservations, shifts,
-    auditLogs, settings, suppliers, rents, cashAdvances, complaints,
+    deliveryAgents, settings, suppliers, rents, cashAdvances, complaints,
   };
 }
 

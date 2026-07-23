@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Search, Phone, MapPin, Star, History, Filter, X } from 'lucide-react';
+import { Plus, Search, Phone, MapPin, Star, History, Filter, X, Pencil, Trash2 } from 'lucide-react';
 import { api } from '../api/client.js';
 import { useFetch } from '../hooks/useApi.js';
 import { usePaginated } from '../hooks/usePaginated.js';
@@ -8,25 +8,29 @@ import { useUI } from '../store/ui.js';
 import { Card, PageHeader, Spinner, Badge, Modal, Avatar, DataTable, LocationSelect, Dropdown, Phone as PhoneField } from '../components/ui.jsx';
 import { money, shortName, date } from '../utils/format.js';
 
+const emptyForm = { name: '', phone: '', address: '', city: '', area: '', notes: '' };
+
 export default function Clients() {
   const { t } = useTranslation();
   const lang = useUI((s) => s.lang);
   const notify = useUI((s) => s.notify);
+  const confirm = useUI((s) => s.confirm);
   const { data: locTree } = useFetch('/locations/tree', []);
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [detail, setDetail] = useState(null);
   const [history, setHistory] = useState(null);
-  const [form, setForm] = useState({ name: '', phone: '', address: '', governorate: '', area: '', notes: '' });
+  const [form, setForm] = useState(emptyForm);
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState({ governorate: '', minVisits: '', maxVisits: '', minSpent: '', maxSpent: '', sortBy: '' });
+  const [filter, setFilter] = useState({ city: '', minVisits: '', maxVisits: '', minSpent: '', maxSpent: '', sortBy: '' });
 
   const fetchClients = useCallback(async () => {
     setLoading(true);
     try {
       const params = {};
-      if (filter.governorate) params.governorate = filter.governorate;
+      if (filter.city) params.city = filter.city;
       if (filter.minVisits) params.minVisits = filter.minVisits;
       if (filter.maxVisits) params.maxVisits = filter.maxVisits;
       if (filter.minSpent) params.minSpent = filter.minSpent;
@@ -47,23 +51,54 @@ export default function Clients() {
 
   const { page, pageSize, totalPages, totalItems, setPage, setPageSize, paginatedData: paginatedClients } = usePaginated(filtered, 10);
 
-  const governorates = [...new Set(data.map((c) => c.governorate).filter(Boolean))];
+  const cities = [...new Set(data.map((c) => c.city).filter(Boolean))];
 
   const applyFilter = () => fetchClients();
-  const clearFilter = () => { setFilter({ governorate: '', minVisits: '', maxVisits: '', minSpent: '', maxSpent: '', sortBy: '' }); };
+  const clearFilter = () => { setFilter({ city: '', minVisits: '', maxVisits: '', minSpent: '', maxSpent: '', sortBy: '' }); };
+
+  const openNew = () => { setEditingId(null); setForm(emptyForm); setOpen(true); };
+  const openEdit = (c) => {
+    setEditingId(c.id);
+    setForm({
+      name: c.name || '', phone: c.phoneNumbers?.[0] || '', address: c.addresses?.[0] || '',
+      city: c.city || '', area: c.area || '', notes: c.notes || '',
+    });
+    setOpen(true);
+  };
 
   const save = async () => {
+    const payload = {
+      name: form.name,
+      phoneNumbers: form.phone ? [form.phone] : [],
+      addresses: form.address ? [form.address] : [],
+      city: form.city || '',
+      area: form.area || '',
+      notes: form.notes,
+    };
     try {
-      await api.post('/clients', {
-        name: form.name,
-        phoneNumbers: form.phone ? [form.phone] : [],
-        addresses: form.address ? [form.address] : [],
-        governorate: form.governorate || '',
-        area: form.area || '',
-        notes: form.notes,
-      });
-      notify(t('clients.added', 'Customer added'));
-      setOpen(false); setForm({ name: '', phone: '', address: '', governorate: '', area: '', notes: '' });
+      if (editingId) {
+        await api.put(`/clients/${editingId}`, payload);
+        notify(t('clients.updated', 'Customer updated'));
+      } else {
+        await api.post('/clients', payload);
+        notify(t('clients.added', 'Customer added'));
+      }
+      setOpen(false); setEditingId(null); setForm(emptyForm);
+      fetchClients();
+    } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+  };
+
+  const removeClient = async (c) => {
+    const ok = await confirm({
+      title: t('clients.deleteTitle', 'Delete customer?'),
+      message: t('clients.deleteConfirm', 'Delete {{name}}? Their past orders are kept for history.').replace('{{name}}', shortName(c.name, lang)),
+      confirmLabel: t('common.delete'),
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/clients/${c.id}`);
+      notify(t('clients.deleted', 'Customer deleted'));
       fetchClients();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
   };
@@ -80,17 +115,17 @@ export default function Clients() {
     <div className="fade-in">
       <PageHeader title={t('nav.clients')} subtitle={`${data.length} ${t('clients.customers', 'customers')}`}>
         <div className="search"><Search size={15} color="var(--muted)" /><input placeholder={`${t('common.search')} ${t('common.name')}/${t('common.phone')}`} value={q} onChange={(e) => setQ(e.target.value)} /></div>
-        <button className="btn btn--primary" onClick={() => setOpen(true)}><Plus size={16} /> {t('common.add')}</button>
+        <button className="btn btn--primary" onClick={openNew}><Plus size={16} /> {t('common.add')}</button>
       </PageHeader>
 
       {/* Filter row */}
       <div className="card" style={{ padding: 14, marginBottom: 16 }}>
         <div className="row wrap" style={{ gap: 10, alignItems: 'flex-end' }}>
           <div className="field" style={{ flex: 1, minWidth: 140, marginBottom: 0 }}>
-            <label>{t('clients.filterByGovernorate')}</label>
-            <Dropdown value={filter.governorate} onChange={(v) => setFilter({ ...filter, governorate: v })}
+            <label>{t('clients.filterByCity')}</label>
+            <Dropdown value={filter.city} onChange={(v) => setFilter({ ...filter, city: v })}
               placeholder={t('common.all', 'All')}
-              options={[{ value: '', label: t('common.all', 'All') }, ...governorates.map((g) => ({ value: g, label: g }))]} />
+              options={[{ value: '', label: t('common.all', 'All') }, ...cities.map((g) => ({ value: g, label: g }))]} />
           </div>
           <div className="field" style={{ flex: 1, minWidth: 100, marginBottom: 0 }}>
             <label>{t('clients.minVisits')}</label>
@@ -132,10 +167,15 @@ export default function Clients() {
               <div className="row" style={{ gap: 10 }}><Avatar name={v} size={34} />
                 <span style={{ fontWeight: 600 }}>{shortName(v, lang)}</span></div>) },
             { key: 'phone', label: t('common.phone'), render: (_, r) => <PhoneField>{r.phoneNumbers?.[0]}</PhoneField> },
-            { key: 'location', label: t('clients.location', 'Location'), render: (_, r) => [r.area, r.governorate].filter(Boolean).join(' · ') || '—' },
+            { key: 'location', label: t('clients.location', 'Location'), render: (_, r) => [r.area, r.city].filter(Boolean).join(' · ') || '—' },
             { key: 'visitCount', label: t('clients.visits', 'Visits'), align: 'end' },
             { key: 'totalSpent', label: t('clients.totalSpent'), align: 'end', render: (v) => money(v) },
             { key: 'loyaltyPoints', label: t('clients.loyaltyPoints'), align: 'end', render: (v) => <Badge kind="brand"><Star size={12} /> {v}</Badge> },
+            { key: 'actions', label: t('common.actions'), render: (_, r) => (
+              <div className="row" style={{ gap: 6 }} onClick={(e) => e.stopPropagation()}>
+                <button className="btn btn--icon btn--sm" title={t('common.edit')} onClick={() => openEdit(r)}><Pencil size={13} /></button>
+                <button className="btn btn--icon btn--sm btn--danger" title={t('common.delete')} onClick={() => removeClient(r)}><Trash2 size={13} /></button>
+              </div>) },
           ]}
           rows={paginatedClients}
           empty={t('clients.empty', 'No customers yet.')}
@@ -143,14 +183,14 @@ export default function Clients() {
         />
       </Card>
 
-      {/* Add modal */}
-      <Modal open={open} onClose={() => setOpen(false)} title={t('clients.new', 'New Customer')}
-        footer={<><button className="btn" onClick={() => setOpen(false)}>{t('common.cancel')}</button><button className="btn btn--primary" onClick={save}>{t('common.save')}</button></>}>
+      {/* Add / edit modal */}
+      <Modal open={open} onClose={() => { setOpen(false); setEditingId(null); }} title={editingId ? t('clients.edit', 'Edit Customer') : t('clients.new', 'New Customer')}
+        footer={<><button className="btn" onClick={() => { setOpen(false); setEditingId(null); }}>{t('common.cancel')}</button><button className="btn btn--primary" onClick={save}>{t('common.save')}</button></>}>
         <div className="field"><label>{t('common.name')}</label><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
         <div className="field"><label>{t('common.phone')}</label><input className="input ltr" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+20 100 000 0000" /></div>
         <div style={{ marginBottom: 14 }}>
-          <LocationSelect tree={locTree || {}} governorate={form.governorate} area={form.area}
-            onChange={({ governorate, area }) => setForm({ ...form, governorate, area })} />
+          <LocationSelect tree={locTree || {}} city={form.city} area={form.area}
+            onChange={({ city, area }) => setForm({ ...form, city, area })} />
         </div>
         <div className="field">
           <label>{t('clients.deliveryAddress', 'Delivery Address')}</label>

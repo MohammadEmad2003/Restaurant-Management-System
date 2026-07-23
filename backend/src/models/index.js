@@ -47,22 +47,47 @@ export const schemas = {
     nextCashierId: t('string'),
     nextCashierName: t('string'),
     notes: t('string'),
+    // Whether the next cashier has already opened their shift against this
+    // one's handed-over (not deposited to owner) float — prevents the same
+    // physical cash from being re-added to the Restaurant Cash Ledger twice.
+    handoverConsumed: t('boolean', { default: false }),
   },
   clients: {
     name: t('string', { required: true }),
     phoneNumbers: t('array', { default: [] }),
     addresses: t('array', { default: [] }),
-    governorate: t('string'),   // fixed, admin-managed location (for profit-by-area reports)
-    area: t('string'),          // place / district within the governorate
+    city: t('string'),          // fixed, admin-managed location (for profit-by-area reports); was "governorate"
+    area: t('string'),          // area / district within the city
     notes: t('string'),
     loyaltyPoints: t('number', { default: 0 }),
     totalSpent: t('number', { default: 0 }),
     visitCount: t('number', { default: 0 }),
     preferences: t('array', { default: [] }),
+    status: t('string', { enum: ['active', 'deleted'], default: 'active' }),
   },
   locations: {
-    governorate: t('string', { required: true }),
-    area: t('string'), // a single place/district inside the governorate
+    city: t('string', { required: true }),  // was "governorate"
+    area: t('string'), // a single area/district inside the city
+  },
+  deliveryAgents: {
+    name: t('string', { required: true }),
+    phone: t('string'),
+    active: t('boolean', { default: true }),
+  },
+  // Restaurant-level Cash Ledger — the sole authoritative source for the
+  // Restaurant-wide Cash Drawer balance. Deliberately independent of
+  // cashierShifts: a transaction may optionally reference the shift that was
+  // open when it happened (cashierShiftId), but a valid cash transaction must
+  // never be blocked or lost just because no shift happens to be open.
+  cashLedger: {
+    amount: t('number', { required: true }), // signed: positive = cash in, negative = cash out
+    transactionType: t('string', {
+      required: true,
+      enum: ['CASH_SALE', 'DELIVERY_AGENT_PAID_NOW', 'PENDING_PAYMENT_SETTLEMENT', 'SHIFT_OPEN_FLOAT', 'SHIFT_CLOSE_ADJUSTMENT', 'CASH_ADVANCE'],
+    }),
+    orderId: t('string'),
+    cashierShiftId: t('string'), // nullable — optional attribution only, never a precondition
+    createdByUserId: t('string'),
   },
   goods: {
     name: t('string', { required: true }),
@@ -89,10 +114,28 @@ export const schemas = {
     notes: t('string'),
     paymentMethod: t('string', { enum: ['cash', 'card', 'wallet'], default: 'cash' }),
     status: t('string', { enum: ['pending', 'preparing', 'completed', 'cancelled'], default: 'pending' }),
-    governorate: t('string'),       // snapshot of the customer's location for reporting
+    city: t('string'),       // snapshot of the customer's location for reporting; was "governorate"
     area: t('string'),
     deliveryAddress: t('string'),   // specific drop-off address for delivery orders
     deliveryPerson: t('string'),    // name of the delivery man handling the order (printed on receipt)
+    deliveryAgentId: t('string'),   // registered delivery agent handling this order, if any
+    deliveryAgentName: t('string'), // snapshot of the agent's name
+    // No schema-level default: orderService.create() decides paid-vs-pending
+    // based on whether a delivery agent is assigned — a static default here
+    // would run before that business logic and always win.
+    paymentStatus: t('string', { enum: ['paid', 'pending'] }),
+    // Only meaningful for delivery-agent orders: whether the cashier collected
+    // the money immediately, or the agent settles at the end of the day.
+    // "Payment is expected" (END_OF_DAY + pending) vs "payment actually
+    // received" (paid, regardless of timing) are never the same state.
+    // PAID_NOW: money already received, order is PAID immediately.
+    // END_OF_DAY: agent explicitly expected to settle at end of day.
+    // UNPAID_PRINTED: receipt printed now but payment simply hasn't been
+    // received yet — a distinct business intent from END_OF_DAY even though
+    // both currently resolve to paymentStatus=pending (never conflate this
+    // enum with paymentStatus itself).
+    paymentTiming: t('string', { enum: ['PAID_NOW', 'END_OF_DAY', 'UNPAID_PRINTED'] }),
+    paidAt: t('string'),
   },
   goodsChecks: {
     auditId: t('string'),          // human-readable audit code, e.g. AUD-XYZ123

@@ -19,12 +19,13 @@ import { money, num, shortName } from '../utils/format.js';
  * @returns {JSX.Element} A field div with label, input, and unit suffix.
  */
 function QuantityWithUnit({ value, unit, onChange, label }) {
+  const { t } = useTranslation();
   return (
     <div className="field">
       <label>{label}</label>
       <div className="row" style={{ alignItems: 'center', gap: 6 }}>
         <input className="input" type="number" value={value} onChange={onChange} />
-        {unit && <span className="muted" style={{ fontSize: 12 }}>{unit}</span>}
+        {unit && <span className="muted" style={{ fontSize: 12 }}>{t(`inventory.units.${unit}`, unit)}</span>}
       </div>
     </div>
   );
@@ -49,7 +50,7 @@ export default function Inventory() {
       notify(t('inventory.stockAdded', 'Stock added & expense recorded'));
       setPurchase(null); setPForm({ quantity: '', unitPrice: '', supplierId: '' });
       refetch();
-    } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+    } catch (e) { notify(e.response?.data?.error || t('common.failed', 'Failed'), 'error'); }
   };
 
   const addItem = async () => {
@@ -66,7 +67,7 @@ export default function Inventory() {
       notify(t('inventory.itemAdded', 'Item added'));
       setAddOpen(false); setIForm(blankItem);
       refetch();
-    } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+    } catch (e) { notify(e.response?.data?.error || t('common.failed', 'Failed'), 'error'); }
   };
 
   const { page, pageSize, totalPages, totalItems, setPage, setPageSize, paginatedData: paginatedGoods } = usePaginated(data ?? [], 10);
@@ -90,8 +91,8 @@ export default function Inventory() {
           columns={[
             { key: 'name', label: t('common.name'), render: (v) => <span style={{ fontWeight: 600 }}>{shortName(v, lang)}</span> },
             { key: 'category', label: t('inventory.category', 'Category'), render: (v) => <Badge>{v}</Badge> },
-            { key: 'quantityAvailable', label: t('inventory.inStock', 'In Stock'), align: 'end', render: (v, r) => <span>{num(v)} {r.unit}</span> },
-            { key: 'minimumStockLevel', label: t('inventory.minStock', 'Min'), align: 'end', render: (v, r) => `${num(v)} ${r.unit}` },
+            { key: 'quantityAvailable', label: t('inventory.inStock', 'In Stock'), align: 'end', render: (v, r) => <span>{num(v)} {t(`inventory.units.${r.unit}`, r.unit)}</span> },
+            { key: 'minimumStockLevel', label: t('inventory.minStock', 'Min'), align: 'end', render: (v, r) => `${num(v)} ${t(`inventory.units.${r.unit}`, r.unit)}` },
             { key: 'purchasePrice', label: t('inventory.unitCost', 'Unit Cost'), align: 'end', render: (v) => money(v) },
             { key: 'id', label: t('common.status'), render: (_, r) => r.quantityAvailable <= r.minimumStockLevel ? <Badge kind="danger"><span className="dot" />{t('inventory.low', 'Low')}</Badge> : <Badge kind="success"><span className="dot" />{t('inventory.ok', 'OK')}</Badge> },
             ...(can('admin') ? [{ key: '_act', label: t('common.actions'), render: (_, r) => <button className="btn btn--sm" onClick={() => { setPurchase(r); setPForm({ quantity: '', unitPrice: r.purchasePrice, supplierId: '' }); }}><PackagePlus size={14} /> {t('inventory.restock', 'Restock')}</button> }] : []),
@@ -107,7 +108,7 @@ export default function Inventory() {
           <label>{t('inventory.quantityLabel', 'Quantity')}</label>
           <div className="row" style={{ alignItems: 'center', gap: 6 }}>
             <input className="input" type="number" value={pForm.quantity} onChange={(e) => setPForm({ ...pForm, quantity: e.target.value })} />
-            {purchase?.unit && <span className="muted" style={{ fontSize: 12 }}>{purchase.unit}</span>}
+            {purchase?.unit && <span className="muted" style={{ fontSize: 12 }}>{t(`inventory.units.${purchase.unit}`, purchase.unit)}</span>}
           </div>
         </div>
         <div className="field"><label>{t('inventory.unitPrice', 'Unit Price')}</label><input className="input" type="number" step="0.001" value={pForm.unitPrice} onChange={(e) => setPForm({ ...pForm, unitPrice: e.target.value })} /></div>
@@ -123,14 +124,14 @@ export default function Inventory() {
         <div className="row" style={{ gap: 12 }}>
           <div className="field" style={{ flex: 1 }}><label>{t('inventory.unit', 'Unit')}</label>
             <select className="select" value={iForm.unit} onChange={(e) => setIForm({ ...iForm, unit: e.target.value })}>
-              {['kg', 'g', 'L', 'ml', 'pcs', 'box', 'pack', 'bottle'].map((u) => <option key={u} value={u}>{u}</option>)}
+              {['kg', 'g', 'L', 'ml', 'pcs', 'box', 'pack', 'bottle'].map((u) => <option key={u} value={u}>{t(`inventory.units.${u}`, u)}</option>)}
             </select>
           </div>
           <div className="field" style={{ flex: 1 }}>
             <label>{t('inventory.qty', 'Quantity in stock')}</label>
             <div className="row" style={{ alignItems: 'center', gap: 6 }}>
               <input className="input" type="number" step="any" value={iForm.quantityAvailable} onChange={(e) => setIForm({ ...iForm, quantityAvailable: e.target.value })} placeholder="0" />
-              <span className="muted" style={{ fontSize: 12 }}>{iForm.unit}</span>
+              <span className="muted" style={{ fontSize: 12 }}>{t(`inventory.units.${iForm.unit}`, iForm.unit)}</span>
             </div>
           </div>
         </div>
@@ -139,7 +140,7 @@ export default function Inventory() {
             <label>{t('inventory.lowStock', 'Low-stock level')}</label>
             <div className="row" style={{ alignItems: 'center', gap: 6 }}>
               <input className="input" type="number" step="any" value={iForm.minimumStockLevel} onChange={(e) => setIForm({ ...iForm, minimumStockLevel: e.target.value })} placeholder="0" />
-              <span className="muted" style={{ fontSize: 12 }}>{iForm.unit}</span>
+              <span className="muted" style={{ fontSize: 12 }}>{t(`inventory.units.${iForm.unit}`, iForm.unit)}</span>
             </div>
           </div>
           <div className="field" style={{ flex: 1 }}><label>{t('inventory.unitCost', 'Unit cost')}</label><input className="input" type="number" step="0.001" value={iForm.purchasePrice} onChange={(e) => setIForm({ ...iForm, purchasePrice: e.target.value })} placeholder="0.00" /></div>

@@ -1,13 +1,15 @@
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts';
 import {
-  TrendingUp, DollarSign, ShoppingBag, Wallet, Boxes, AlertTriangle, Users, Percent,
+  TrendingUp, DollarSign, ShoppingBag, Wallet, Boxes, AlertTriangle, Users, Percent, Banknote,
 } from 'lucide-react';
 import { useFetch } from '../hooks/useApi.js';
 import { useAuth } from '../store/auth.js';
+import { usePosStats } from '../store/posStats.js';
 import { Card, Stat, Spinner, DataTable, StatusBadge, Avatar } from '../components/ui.jsx';
 import { money, num, shortName, date } from '../utils/format.js';
 import { useUI } from '../store/ui.js';
@@ -34,6 +36,12 @@ export default function Dashboard() {
   // stay above the role-based early return below.
   const { data, loading } = useFetch('/analytics/dashboard', []);
   const { data: orders } = useFetch('/orders', []);
+  // Shared with the POS/Topbar via usePosStats — the SAME Restaurant-wide
+  // ledger-backed figure everywhere, updated the instant a settlement
+  // happens anywhere in the app, not just refetched on this page's mount.
+  const cashDrawerTotal = usePosStats((s) => s.cashDrawerTotal);
+  const refreshCashDrawer = usePosStats((s) => s.refreshCashDrawer);
+  useEffect(() => { refreshCashDrawer(); }, [refreshCashDrawer]);
 
   if (!can('admin')) return <CashierHome />;
   if (loading || !data) return <Spinner />;
@@ -65,6 +73,7 @@ export default function Dashboard() {
         <Stat label={t('dashboard.lowStock')} value={num(inventory.lowStockCount)} icon={AlertTriangle} color="linear-gradient(135deg,#ef4444,#f87171)" deltaDir={inventory.lowStockCount > 0 ? 'down' : 'up'} delta={inventory.lowStockCount > 0 ? 'attention' : 'ok'} />
         <Stat label={t('dashboard.customers')} value={num(customers.totalCustomers)} icon={Users} color="linear-gradient(135deg,#8b5cf6,#c084fc)" delta={`${customers.retentionRate}%`} />
         <Stat label={t('dashboard.wasteValue')} value={money(inventory.wasteValue)} icon={Percent} color="linear-gradient(135deg,#64748b,#94a3b8)" />
+        <Stat label={t('dashboard.cashInDrawer', 'Cash in Drawer')} value={money(cashDrawerTotal || 0)} icon={Banknote} color="linear-gradient(135deg,#16a34a,#4ade80)" />
       </div>
 
       {/* Charts */}
@@ -182,6 +191,14 @@ function CashierHome() {
   const lang = useUI((s) => s.lang);
   const { data: activity } = useFetch(`/workers/${user.sub}/activity`, []);
   const { data: orders } = useFetch('/orders', []);
+  // Shared with Admin's Dashboard/Topbar/POS via usePosStats — the SAME
+  // Restaurant-wide ledger-backed total everywhere, not this cashier's own
+  // personal shift figure (which would drift the moment a different till
+  // holds the money), and refreshed immediately on settlement, not only on
+  // this page's own mount.
+  const cashDrawerTotal = usePosStats((s) => s.cashDrawerTotal);
+  const refreshCashDrawer = usePosStats((s) => s.refreshCashDrawer);
+  useEffect(() => { refreshCashDrawer(); }, [refreshCashDrawer]);
   const mine = (orders || []).filter((o) => o.cashierId === user.sub).sort((a, b) => b.orderDate - a.orderDate).slice(0, 8);
 
   return (
@@ -190,6 +207,7 @@ function CashierHome() {
       <div className="grid grid--stats" style={{ marginBottom: 18 }}>
         <Stat label={t('dashboard.orders')} value={num(activity?.ordersCreated || 0)} icon={ShoppingBag} />
         <Stat label="Revenue Generated" value={money(activity?.revenueGenerated || 0)} icon={DollarSign} color="linear-gradient(135deg,#10b981,#34d399)" />
+        <Stat label={t('dashboard.cashInDrawer', 'Cash in Drawer')} value={money(cashDrawerTotal || 0)} icon={Banknote} color="linear-gradient(135deg,#16a34a,#4ade80)" />
       </div>
       <Card title={t('orders.history')}>
         <DataTable

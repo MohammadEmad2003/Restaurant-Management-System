@@ -1,7 +1,6 @@
 import { repo } from '../repositories/index.js';
 import { createCrudService } from './baseService.js';
 import { hashPassword, sanitize } from '../utils/hash.js';
-import { recordAudit } from '../middleware/audit.js';
 import { HttpError } from '../middleware/errorHandler.js';
 import { secureStore } from '../repositories/secureStore.js';
 
@@ -47,7 +46,6 @@ export const workerService = {
       legacyWorkerId: created.id,
     });
 
-    await recordAudit(user, 'WORKER_CREATED', 'workers', created.id, { after: sanitize(created) });
     return sanitize(created);
   },
 
@@ -81,7 +79,6 @@ export const workerService = {
     const updated = await repo('workers').update(id, { status: 'inactive' });
     const existingUser = await store.findOne('users', { legacyWorkerId: id });
     if (existingUser) await store.update('users', existingUser.id, { status: 'inactive' });
-    await recordAudit(user, 'WORKER_DISABLED', 'workers', id, { after: sanitize(updated) });
     return sanitize(updated);
   },
 
@@ -91,16 +88,12 @@ export const workerService = {
     return base.remove(id, user);
   },
 
-  /** Activity log for a single worker (orders created + audit entries). */
+  /** Activity summary for a single worker (orders created + revenue generated). */
   async activity(id, user) {
-    const [orders, logs] = await Promise.all([
-      repo('orders').getAll({ cashierId: id, restaurantId: user?.restaurantId }),
-      repo('auditLogs').getAll({ userId: id, restaurantId: user?.restaurantId }),
-    ]);
+    const orders = await repo('orders').getAll({ cashierId: id, restaurantId: user?.restaurantId });
     return {
       ordersCreated: orders.length,
       revenueGenerated: orders.reduce((s, o) => s + (o.totalPrice || 0), 0),
-      recentActions: logs.sort((a, b) => b.timestamp - a.timestamp).slice(0, 50),
     };
   },
 };

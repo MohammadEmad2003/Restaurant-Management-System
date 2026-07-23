@@ -5,7 +5,6 @@ import { asyncHandler } from '../middleware/errorHandler.js';
 import { authService } from '../services/authService.js';
 import { licenseService } from '../services/licenseService.js';
 import { deviceService } from '../services/deviceService.js';
-import { auditService } from '../services/auditService.js';
 import { buildFingerprint } from '../utils/device.js';
 import { getPublicKeySpkiBase64 } from '../utils/offlineLicenseCrypto.js';
 

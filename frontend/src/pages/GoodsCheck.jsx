@@ -40,7 +40,7 @@ export default function GoodsCheck() {
       notify(t('goodsCheck.checkRecorded', 'Check recorded & stock adjusted'));
       setOpen(false); setForm({ goodId: '', actualQuantity: '', reason: 'Spoilage' });
       refetch(); fetchWaste();
-    } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+    } catch (e) { notify(e.response?.data?.error || t('common.failed', 'Failed'), 'error'); }
   };
 
   useEffect(() => { fetchWaste(); }, [fetchWaste]);
@@ -70,7 +70,7 @@ export default function GoodsCheck() {
               <label>{t('goodsCheck.filterByReason', 'Filter by Reason')}</label>
               <select className="select" value={reasonFilter} onChange={(e) => setReasonFilter(e.target.value)}>
                 <option value="">{t('common.all', 'All Reasons')}</option>
-                {Object.entries(t('goodsCheck.reasons')).map(([key, val]) => <option key={key}>{val}</option>)}
+                {Object.entries(t('goodsCheck.reasons', { returnObjects: true })).map(([key, val]) => <option key={key} value={key}>{val}</option>)}
               </select>
             </div>
             <div className="field" style={{ flex: 1, minWidth: 130 }}>
@@ -98,7 +98,7 @@ export default function GoodsCheck() {
               { key: 'date', label: t('common.date'), render: (v) => v },
               { key: 'goodId', label: t('goodsCheck.item', 'Item'), render: (v) => goodName(v) },
               { key: 'difference', label: t('goodsCheck.diff', 'Diff'), align: 'end', render: (v) => <Badge kind={v > 0 ? 'danger' : 'success'}>{v > 0 ? '-' : '+'}{Math.abs(v).toFixed(1)}</Badge> },
-              { key: 'reason', label: t('goodsCheck.reason', 'Reason'), render: (v) => <span className="muted">{v}</span> },
+              { key: 'reason', label: t('goodsCheck.reason', 'Reason'), render: (v) => <span className="muted">{t(`goodsCheck.reasons.${v}`, v)}</span> },
             ]}
             rows={paginatedChecks}
             pagination={{ currentPage: page, totalPages, onPageChange: setPage, pageSize, totalItems, onPageSizeChange: setPageSize }}
@@ -111,7 +111,7 @@ export default function GoodsCheck() {
         <div className="field"><label>{t('goodsCheck.item', 'Item')}</label>
           <select className="select" value={form.goodId} onChange={(e) => setForm({ ...form, goodId: e.target.value })}>
             <option value="">{t('common.selectCategory', 'Select…')}</option>
-            {(goods || []).map((g) => <option key={g.id} value={g.id}>{shortName(g.name, lang)} (system: {num(g.quantityAvailable)} {g.unit})</option>)}
+            {(goods || []).map((g) => <option key={g.id} value={g.id}>{shortName(g.name, lang)} ({t('goodsCheck.systemQty', 'system')}: {num(g.quantityAvailable)} {t(`inventory.units.${g.unit}`, g.unit)})</option>)}
           </select>
         </div>
         <div className="field"><label>{t('goodsCheck.actualCountedQuantity', 'Actual Counted Quantity')}</label><input className="input" type="number" value={form.actualQuantity} onChange={(e) => setForm({ ...form, actualQuantity: e.target.value })} /></div>

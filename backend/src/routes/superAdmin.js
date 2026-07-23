@@ -6,15 +6,12 @@ import { superAdminService } from '../services/superAdminService.js';
 import { licenseService } from '../services/licenseService.js';
 import { deviceService } from '../services/deviceService.js';
 import { sessionService } from '../services/sessionService.js';
-import { auditService } from '../services/auditService.js';
-import { auditMiddleware } from '../middleware/audit.js';
 
 const router = Router();
 const h = asyncHandler;
 
 router.use(auth);
 router.use(requireSuperAdmin);
-router.use(auditMiddleware);
 
 /* ───────────── RESTAURANTS ───────────── */
 router.get('/restaurants', h(async (req, res) => res.json(await superAdminService.listRestaurants())));
@@ -51,6 +48,7 @@ router.patch('/users/:userId', h(async (req, res) => {
 router.patch('/users/:userId/suspend', h(async (req, res) => res.json(await superAdminService.suspendRestaurantUser(req.params.userId))));
 router.patch('/users/:userId/activate', h(async (req, res) => res.json(await superAdminService.activateRestaurantUser(req.params.userId))));
 router.delete('/users/:userId', h(async (req, res) => { await superAdminService.deleteRestaurantUser(req.params.userId); res.status(204).end(); }));
+router.get('/users/:userId/devices', h(async (req, res) => res.json(await deviceService.listByUser(req.params.userId))));
 
 /* ───────────── LICENSES ───────────── */
 router.get('/licenses/:restaurantId', h(async (req, res) => {
@@ -92,7 +90,5 @@ router.get('/restaurants/:id/sessions', h(async (req, res) => res.json(await ses
 router.get('/restaurants/:id/sessions/active', h(async (req, res) => res.json(await sessionService.list({ restaurantId: req.params.id, status: 'active' }))));
 router.patch('/sessions/:sessionId/terminate', h(async (req, res) => res.json(await sessionService.terminateSession(req.params.sessionId))));
 router.post('/restaurants/:id/force-logout-cashiers', h(async (req, res) => res.json(await sessionService.terminateAllCashierSessions(req.params.id))));
-router.get('/audit-logs', h(async (req, res) => res.json(await auditService.list(req.query))));
-router.get('/restaurants/:id/audit-logs', h(async (req, res) => res.json(await auditService.listByRestaurant(req.params.id))));
 
 export default router;

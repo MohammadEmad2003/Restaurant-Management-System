@@ -8,7 +8,6 @@ import { PERMISSIONS } from '../config/permissions.js';
 import { licenseService } from './licenseService.js';
 import { deviceService } from './deviceService.js';
 import { sessionService } from './sessionService.js';
-import { auditService } from './auditService.js';
 import { buildFingerprint, classifyDeviceType } from '../utils/device.js';
 import { withLock } from '../utils/lock.js';
 import { signOfflinePayload } from '../utils/offlineLicenseCrypto.js';
@@ -39,11 +38,19 @@ export const authService = {
     const allDevices = await store.findAll('devices');
     const knownDevice = allDevices.find((d) => d.fingerprint === fingerprint && d.status === 'active');
     const restaurantIdHint = knownDevice?.restaurantId;
+    // A restaurant may intentionally have several users sharing one username,
+    // disambiguated by which device each was bound to (see Users doc/Part 9) —
+    // if this exact device is already bound to one specific user among the
+    // remaining candidates, prefer that user deterministically.
+    const userIdHint = knownDevice?.userId;
 
     const allUsers = await store.findAll('users');
     let candidates = allUsers.filter((u) => u.username === username);
     if (restaurantIdHint && candidates.some((u) => u.restaurantId === restaurantIdHint)) {
       candidates = candidates.filter((u) => u.restaurantId === restaurantIdHint);
+    }
+    if (userIdHint && candidates.some((u) => u.id === userIdHint)) {
+      candidates = candidates.filter((u) => u.id === userIdHint);
     }
 
     let user = null;
@@ -158,14 +165,6 @@ export const authService = {
       return { device: registeredDevice, token: newToken, jwtId: newJwtId };
     });
 
-    await auditService.log({
-      userId: user.id,
-      restaurantId: user.restaurantId,
-      action: 'USER_LOGIN',
-      deviceId: device.id,
-      ipAddress,
-    });
-
     const offlineLicense = this.generateOfflineLicense({
       restaurantId: user.restaurantId,
       licenseId: license.id,
@@ -204,15 +203,19 @@ export const authService = {
   },
 
   async activateRestaurantLicense({ username, password, token, fingerprint, deviceName, operatingSystem, ipAddress }) {
-    // Same disambiguation-only hint as loginRestaurantUser — must not exclude
+    // Same disambiguation-only hints as loginRestaurantUser — must not exclude
     // a legitimate user in a different restaurant (see comment there).
     const allDevices = await store.findAll('devices');
     const knownDevice = allDevices.find((d) => d.fingerprint === fingerprint && d.status === 'active');
     const restaurantIdHint = knownDevice?.restaurantId;
+    const userIdHint = knownDevice?.userId;
     const allUsers = await store.findAll('users');
     let candidates = allUsers.filter((u) => u.username === username);
     if (restaurantIdHint && candidates.some((u) => u.restaurantId === restaurantIdHint)) {
       candidates = candidates.filter((u) => u.restaurantId === restaurantIdHint);
+    }
+    if (userIdHint && candidates.some((u) => u.id === userIdHint)) {
+      candidates = candidates.filter((u) => u.id === userIdHint);
     }
     let user = null;
     for (const candidate of candidates) {
@@ -256,12 +259,6 @@ export const authService = {
       userType: 'super_admin',
       deviceId: null,
       restaurantId: null,
-    });
-
-    await auditService.log({
-      userId: admin.id,
-      action: 'SUPER_ADMIN_LOGIN',
-      ipAddress,
     });
 
     return {

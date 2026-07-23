@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Save, Store, MapPin, Plus, Trash2 } from 'lucide-react';
+import { Save, Store, MapPin, Plus, Trash2, Truck } from 'lucide-react';
 import { useFetch } from '../hooks/useApi.js';
 import { api } from '../api/client.js';
 import { useUI } from '../store/ui.js';
@@ -90,6 +90,7 @@ export default function Settings() {
       </Card>
 
       <LocationsCard />
+      <DeliveryAgentsCard />
 
       <Card title={t('settings.supabase', 'Supabase Connection')} style={{ marginTop: 18 }}>
         <p className="muted" style={{ fontSize: 13.5, lineHeight: 1.7 }}>
@@ -103,18 +104,18 @@ export default function Settings() {
   );
 }
 
-/** Admin-managed governorates + areas used for customer profiling & profit-by-area. */
+/** Admin-managed cities + areas used for customer profiling & profit-by-area. */
 function LocationsCard() {
   const { t } = useTranslation();
   const notify = useUI((s) => s.notify);
   const { data: locations, refetch } = useFetch('/locations', []);
-  const [gov, setGov] = useState('');
+  const [city, setCity] = useState('');
   const [area, setArea] = useState('');
 
   const add = async () => {
-    if (!gov.trim()) { notify(t('locations.govRequired', 'Governorate is required'), 'error'); return; }
+    if (!city.trim()) { notify(t('locations.cityRequired', 'City is required'), 'error'); return; }
     try {
-      await api.post('/locations', { governorate: gov.trim(), area: area.trim() });
+      await api.post('/locations', { city: city.trim(), area: area.trim() });
       notify(t('locations.added', 'Location added'));
       setArea('');
       refetch();
@@ -125,23 +126,23 @@ function LocationsCard() {
     catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
   };
 
-  // group by governorate for display
-  const byGov = {};
-  for (const l of locations || []) (byGov[l.governorate] ||= []).push(l);
+  // group by city for display
+  const byCity = {};
+  for (const l of locations || []) (byCity[l.city] ||= []).push(l);
 
   return (
-    <Card title={<span className="row" style={{ gap: 8 }}><MapPin size={16} /> {t('locations.title', 'Locations (Governorates & Areas)')}</span>}
+    <Card title={<span className="row" style={{ gap: 8 }}><MapPin size={16} /> {t('locations.title', 'Locations (Cities & Areas)')}</span>}
       sub={t('locations.hint', 'Customers and delivery orders are tagged with these so you can report profit by area.')} style={{ marginTop: 18 }}>
       <div className="row" style={{ gap: 12, alignItems: 'flex-end', marginBottom: 16 }}>
-        <div className="field" style={{ flex: 1, marginBottom: 0 }}><label>{t('locations.governorate', 'Governorate')}</label><input className="input" value={gov} onChange={(e) => setGov(e.target.value)} placeholder="Cairo — القاهرة" /></div>
-        <div className="field" style={{ flex: 1, marginBottom: 0 }}><label>{t('locations.area', 'Area / Place')}</label><input className="input" value={area} onChange={(e) => setArea(e.target.value)} placeholder="Maadi — المعادي" /></div>
+        <div className="field" style={{ flex: 1, marginBottom: 0 }}><label>{t('locations.city', 'City')}</label><input className="input" value={city} onChange={(e) => setCity(e.target.value)} placeholder="Cairo — القاهرة" /></div>
+        <div className="field" style={{ flex: 1, marginBottom: 0 }}><label>{t('locations.area', 'Area / District')}</label><input className="input" value={area} onChange={(e) => setArea(e.target.value)} placeholder="Maadi — المعادي" /></div>
         <button className="btn btn--primary" onClick={add}><Plus size={15} /> {t('common.add')}</button>
       </div>
-      {Object.keys(byGov).sort().map((g) => (
+      {Object.keys(byCity).sort().map((g) => (
         <div key={g} style={{ marginBottom: 12 }}>
           <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>{g}</div>
           <div className="chip-row">
-            {byGov[g].map((l) => (
+            {byCity[g].map((l) => (
               <span key={l.id} className="badge" style={{ gap: 6 }}>
                 {l.area || '—'}
                 <button className="btn btn--icon" style={{ padding: 2 }} onClick={() => del(l.id)}><Trash2 size={12} /></button>
@@ -150,7 +151,57 @@ function LocationsCard() {
           </div>
         </div>
       ))}
-      {!(locations || []).length && <div className="empty">{t('locations.none', 'No locations yet — add your governorates and areas above.')}</div>}
+      {!(locations || []).length && <div className="empty">{t('locations.none', 'No locations yet — add your cities and areas above.')}</div>}
+    </Card>
+  );
+}
+
+/** Admin-managed delivery-agent roster, used by the POS delivery workflow and Pending Payments. */
+function DeliveryAgentsCard() {
+  const { t } = useTranslation();
+  const notify = useUI((s) => s.notify);
+  const { data: agents, refetch } = useFetch('/delivery-agents', []);
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+
+  const add = async () => {
+    if (!name.trim()) { notify(t('deliveryAgents.nameRequired', 'Name is required'), 'error'); return; }
+    try {
+      await api.post('/delivery-agents', { name: name.trim(), phone: phone.trim() });
+      notify(t('deliveryAgents.added', 'Delivery agent added'));
+      setName(''); setPhone('');
+      refetch();
+    } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+  };
+  const toggleActive = async (agent) => {
+    try { await api.put(`/delivery-agents/${agent.id}`, { active: !agent.active }); refetch(); }
+    catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+  };
+  const del = async (id) => {
+    try { await api.delete(`/delivery-agents/${id}`); refetch(); }
+    catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+  };
+
+  return (
+    <Card title={<span className="row" style={{ gap: 8 }}><Truck size={16} /> {t('deliveryAgents.title', 'Delivery Agents')}</span>}
+      sub={t('deliveryAgents.hint', 'Agents available for assignment on delivery orders in the POS.')} style={{ marginTop: 18 }}>
+      <div className="row" style={{ gap: 12, alignItems: 'flex-end', marginBottom: 16 }}>
+        <div className="field" style={{ flex: 1, marginBottom: 0 }}><label>{t('common.name')}</label><input className="input" value={name} onChange={(e) => setName(e.target.value)} /></div>
+        <div className="field" style={{ flex: 1, marginBottom: 0 }}><label>{t('common.phone')}</label><input className="input ltr" value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
+        <button className="btn btn--primary" onClick={add}><Plus size={15} /> {t('common.add')}</button>
+      </div>
+      <div className="chip-row">
+        {(agents || []).map((a) => (
+          <span key={a.id} className="badge" style={{ gap: 6, opacity: a.active ? 1 : 0.5 }}>
+            {a.name}
+            <button className="btn btn--icon" style={{ padding: 2 }} onClick={() => toggleActive(a)} title={a.active ? t('deliveryAgents.deactivate', 'Deactivate') : t('deliveryAgents.activate', 'Activate')}>
+              {a.active ? t('common.active') : t('common.inactive')}
+            </button>
+            <button className="btn btn--icon" style={{ padding: 2 }} onClick={() => del(a.id)}><Trash2 size={12} /></button>
+          </span>
+        ))}
+      </div>
+      {!(agents || []).length && <div className="empty">{t('deliveryAgents.empty', 'No delivery agents yet — add one above.')}</div>}
     </Card>
   );
 }

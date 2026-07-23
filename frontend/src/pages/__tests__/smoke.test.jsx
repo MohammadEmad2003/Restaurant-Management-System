@@ -38,7 +38,6 @@ const PAGES = {
   Workers: () => import('../Workers.jsx'),
   Scheduling: () => import('../Scheduling.jsx'),
   GoodsCheck: () => import('../GoodsCheck.jsx'),
-  AuditLogs: () => import('../AuditLogs.jsx'),
 };
 
 afterEach(() => cleanup());

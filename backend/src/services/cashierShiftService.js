@@ -1,19 +1,37 @@
 import { repo } from '../repositories/index.js';
-import { recordAudit } from '../middleware/audit.js';
 import { HttpError } from '../middleware/errorHandler.js';
+import { cashLedgerService } from './cashLedgerService.js';
 
 const round2 = (n) => +Number(n || 0).toFixed(2);
 
-/** Sum a cashier's CASH sales within [from, to] (epoch ms), excluding cancelled orders. */
+/**
+ * Sum a cashier's CASH sales within [from, to] (epoch ms), excluding cancelled
+ * orders. Only ACTUAL received cash counts: a delivery-agent order sitting at
+ * `paymentStatus: 'pending'` (end-of-day timing, money not collected yet)
+ * must never inflate the drawer — it's excluded here regardless of how old
+ * the order is. Orders are windowed by `paidAt` (when the cash was actually
+ * received) rather than `orderDate` (when the order was placed), so an
+ * end-of-day order placed yesterday but settled just now correctly lands in
+ * THIS shift's cash, exactly once, at the moment it's actually collected.
+ * Legacy orders predating this field have neither `paymentStatus` nor a
+ * missing `paidAt` — both default to "paid, dated at order time" so old data
+ * keeps behaving exactly as before.
+ */
 async function computeCashSales(cashierId, from, to, user) {
   const orders = await repo('orders').getAll({ restaurantId: user?.restaurantId });
   return round2(orders
     .filter((o) => o.cashierId === cashierId
       && (o.paymentMethod || 'cash') === 'cash'
       && o.status !== 'cancelled'
-      && (o.orderDate || 0) >= from
-      && (o.orderDate || 0) <= to)
+      && (o.paymentStatus || 'paid') === 'paid'
+      && receivedAt(o) >= from
+      && receivedAt(o) <= to)
     .reduce((s, o) => s + (o.totalPrice || 0), 0));
+}
+
+/** The instant an order's cash actually became available — `paidAt` when set, else `orderDate` for legacy rows. */
+function receivedAt(order) {
+  return order.paidAt ? new Date(order.paidAt).getTime() : (order.orderDate || 0);
 }
 
 /** The cashier's currently open shift, or null. */
@@ -52,9 +70,33 @@ async function open(user, { openingFloat } = {}) {
     nextCashierId: '',
     nextCashierName: '',
     notes: '',
+    handoverConsumed: false,
     restaurantId: user?.restaurantId,
   });
-  await recordAudit(user, 'CASHIER_SHIFT_OPENED', 'cashierShifts', shift.id, { after: shift });
+
+  // Is this open fulfilling a handover from a shift that was closed WITHOUT
+  // depositing to the owner? If so, that physical cash never left the
+  // Restaurant's drawer and is still sitting in the ledger from the previous
+  // shift's untouched contribution (see close() below) — adding a fresh
+  // SHIFT_OPEN_FLOAT entry here would count the exact same cash twice.
+  const priorShifts = await repo('cashierShifts').getAll({ restaurantId: user?.restaurantId, status: 'closed', nextCashierId: cashierId });
+  const handoverSource = priorShifts.find((s) => !s.depositedToOwner && !s.handoverConsumed);
+
+  if (handoverSource) {
+    // Mark it consumed so a second, unrelated shift open can't match it again.
+    await repo('cashierShifts').update(handoverSource.id, { handoverConsumed: true });
+  } else if (float) {
+    // Genuinely new cash entering the drawer (a fresh float, not a handover
+    // continuation) — record it in the ledger so the Restaurant-wide balance
+    // reflects it immediately, independent of any other shift's state.
+    await cashLedgerService.record({
+      restaurantId: user?.restaurantId,
+      amount: float,
+      transactionType: 'SHIFT_OPEN_FLOAT',
+      cashierShiftId: shift.id,
+      createdByUserId: cashierId,
+    });
+  }
   return shift;
 }
 
@@ -97,6 +139,28 @@ async function close(id, user, { countedCash, nextCashierId, depositedToOwner, n
     nextCashierName = next.name;
   }
 
+  // Closing a shift is a LOGICAL logout/handover — it does not, by itself,
+  // move any physical cash. The Restaurant Cash Ledger represents actual cash
+  // physically held by the restaurant, so it must only change here if that
+  // cash is actually leaving the drawer (depositedToOwner: true, e.g. handed
+  // to the owner/banked). If the cash simply stays in the till for the next
+  // cashier (depositedToOwner: false), the ledger must NOT be touched — the
+  // balance stays exactly as it is; the closed shift's contribution remains
+  // attributed to it until (optionally) marked handed-over when the next
+  // cashier opens (see open()), which never re-adds or removes cash either.
+  if (depositedToOwner) {
+    const contribution = await cashLedgerService.shiftContribution(user?.restaurantId, id);
+    if (contribution) {
+      await cashLedgerService.record({
+        restaurantId: user?.restaurantId,
+        amount: -contribution,
+        transactionType: 'SHIFT_CLOSE_ADJUSTMENT',
+        cashierShiftId: id,
+        createdByUserId: user.sub,
+      });
+    }
+  }
+
   const updated = await repo('cashierShifts').update(id, {
     status: 'closed',
     closedAt,
@@ -110,7 +174,6 @@ async function close(id, user, { countedCash, nextCashierId, depositedToOwner, n
     nextCashierName,
     notes: notes || '',
   });
-  await recordAudit(user, 'CASHIER_SHIFT_CLOSED', 'cashierShifts', id, { after: updated });
   return updated;
 }
 
@@ -121,5 +184,23 @@ async function list({ cashierId } = {}, user) {
   return items.sort((a, b) => (b.openedAt || 0) - (a.openedAt || 0));
 }
 
-export const cashierShiftService = { open, current, close, list, computeCashSales };
+/** Admin/Cashier view: every currently-open shift with a live expected-cash
+ * preview (for shift-reconciliation display), plus `total` — the
+ * Restaurant-wide authoritative Cash Drawer balance. `total` comes from the
+ * Restaurant Cash Ledger (cashLedgerService.balance), NOT from summing open
+ * shifts: a cash transaction that happened while its cashier had no open
+ * shift still counts toward the restaurant's real cash, and must never
+ * silently vanish from this figure. POS and Dashboard, for both ADMIN and
+ * CASHIER, must read this same `total`. */
+async function currentAll(user) {
+  const shifts = await repo('cashierShifts').getAll({ restaurantId: user?.restaurantId, status: 'open' });
+  const withCash = await Promise.all(shifts.map(async (shift) => {
+    const cashSales = await computeCashSales(shift.cashierId, shift.openedAt, Date.now(), user);
+    return { ...shift, cashSales, expectedCash: round2((shift.openingFloat || 0) + cashSales) };
+  }));
+  const total = await cashLedgerService.balance(user?.restaurantId);
+  return { shifts: withCash, total };
+}
+
+export const cashierShiftService = { open, current, close, list, currentAll, computeCashSales, openShiftFor };
 export default cashierShiftService;

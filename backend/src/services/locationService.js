@@ -6,12 +6,12 @@ const base = createCrudService('locations', { entityName: 'location' });
 export const locationService = {
   ...base,
 
-  /** Governorate → [areas], for cascading dropdowns. */
+  /** City → [areas], for cascading dropdowns. */
   async tree(user) {
     const rows = await repo('locations').getAll({ restaurantId: user?.restaurantId });
     const tree = {};
     for (const r of rows) {
-      const g = (r.governorate || '').trim();
+      const g = (r.city || '').trim();
       if (!g) continue;
       (tree[g] ||= new Set());
       if (r.area) tree[g].add(r.area.trim());

@@ -1,5 +1,4 @@
 import { repo } from '../repositories/index.js';
-import { recordAudit } from '../middleware/audit.js';
 import { HttpError } from '../middleware/errorHandler.js';
 import { shortCode } from '../utils/ids.js';
 
@@ -29,7 +28,6 @@ export const goodsCheckService = {
       restaurantId: user?.restaurantId,
     });
     await repo('goods').update(good.id, { quantityAvailable: actualQuantity });
-    await recordAudit(user, 'GOODS_CHECKED', 'goodsChecks', check.id, { after: check });
     return check;
   },
 

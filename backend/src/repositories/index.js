@@ -18,9 +18,9 @@ const PREFIX = {
   workers: 'WRK', attendance: 'ATT', clients: 'CLI', goods: 'GD',
   products: 'PRD', orders: 'ORD', goodsChecks: 'CHK', purchases: 'PUR',
   expenses: 'EXP', salaries: 'SAL', reservations: 'RSV', kdsTickets: 'KDS',
-  shifts: 'SHF', locations: 'LOC', auditLogs: 'LOG', settings: 'SET',
+  shifts: 'SHF', locations: 'LOC', settings: 'SET',
   loyaltyTx: 'LOY', complaints: 'CMP', rents: 'RNT', cashAdvances: 'CA',
-  cashierShifts: 'CSH',
+  cashierShifts: 'CSH', deliveryAgents: 'DAG', cashLedger: 'LGR',
 };
 
 /**

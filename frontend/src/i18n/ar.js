@@ -299,5 +299,6 @@ export default {
     collect: 'تحصيل',
     confirmReceiveAmount: 'تأكيد استلام مبلغ {{amount}} ({{count}} طلبات)؟',
     confirmReceiveFromAgent: 'تأكيد استلام مبلغ {{amount}} من المندوب {{name}}؟',
+    pendingCount: 'الطلبات المعلقة', pendingAmount: 'المبلغ المعلق', filteredResults: 'نتائج التصفية', results: 'نتيجة',
   },
 };

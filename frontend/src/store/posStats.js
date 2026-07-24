@@ -18,14 +18,24 @@ import { api } from '../api/client.js';
 export const usePosStats = create((set, get) => ({
   cashDrawerTotal: null,
   pendingPaymentsCount: null,
+  pendingPaymentsTotal: null,
 
   async refreshCashDrawer() {
     const { data } = await api.get('/cashier-shifts/current-all');
     set({ cashDrawerTotal: data?.total ?? 0 });
   },
+  // Always fetches the TRUE restaurant-wide pending queue (no status/agent/
+  // date/search params) — this is the one figure every page (POS badge,
+  // Dashboard, Pending Payments summary tiles) shares, so it can never
+  // silently reflect whatever filter someone else happens to have applied on
+  // the Pending Payments page itself.
   async refreshPendingCount() {
     const { data } = await api.get('/orders/pending-payments');
-    set({ pendingPaymentsCount: Array.isArray(data) ? data.length : 0 });
+    const rows = Array.isArray(data) ? data : [];
+    set({
+      pendingPaymentsCount: rows.length,
+      pendingPaymentsTotal: rows.reduce((s, r) => s + (r.totalPrice || 0), 0),
+    });
   },
   async refreshAll() {
     await Promise.all([get().refreshCashDrawer(), get().refreshPendingCount()]);

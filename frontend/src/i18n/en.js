@@ -304,5 +304,6 @@ export default {
     collect: 'Collect',
     confirmReceiveAmount: 'Confirm receiving {{amount}} ({{count}} orders)?',
     confirmReceiveFromAgent: 'Confirm receiving {{amount}} from delivery agent {{name}}?',
+    pendingCount: 'Pending Orders', pendingAmount: 'Pending Amount', filteredResults: 'Filtered Results', results: 'results',
   },
 };

@@ -240,12 +240,34 @@ export const orderService = {
   },
 
   async cancel(id, user) {
-    const before = await repo('orders').getById(id);
-    if (!before) throw new HttpError(404, 'order not found');
-    if (user?.restaurantId && before.restaurantId && before.restaurantId !== user.restaurantId) {
-      throw new HttpError(404, 'order not found');
-    }
-    return repo('orders').update(id, { status: 'cancelled', restaurantId: before.restaurantId });
+    return withLock(`order-settle-${id}`, async () => {
+      const before = await repo('orders').getById(id);
+      if (!before) throw new HttpError(404, 'order not found');
+      if (user?.restaurantId && before.restaurantId && before.restaurantId !== user.restaurantId) {
+        throw new HttpError(404, 'order not found');
+      }
+      if (before.status === 'cancelled') return before;
+      const cancelled = await repo('orders').update(id, { status: 'cancelled', restaurantId: before.restaurantId });
+      // If the order had already been counted as real cash (a normal paid
+      // sale, a PAID_NOW delivery order, or a settled pending payment), that
+      // money must be reversed out of the Restaurant Cash Ledger — otherwise
+      // the Cash Drawer would keep counting cash for an order that no longer
+      // exists. Sharing the same lock key as markPaid/settlement prevents a
+      // cancel and a concurrent settlement from ever racing on this order.
+      if (before.paymentStatus === 'paid') {
+        const contribution = await cashLedgerService.contributionFor(before.restaurantId, id);
+        if (contribution) {
+          await cashLedgerService.record({
+            restaurantId: before.restaurantId,
+            amount: -contribution,
+            transactionType: 'ORDER_CANCELLED_REVERSAL',
+            orderId: id,
+            createdByUserId: user?.sub,
+          });
+        }
+      }
+      return cancelled;
+    });
   },
 
   async setStatus(id, status, user) {
@@ -270,7 +292,11 @@ export const orderService = {
     if (status !== 'all') rows = rows.filter((o) => (o.paymentStatus || 'paid') === status);
     if (agentId) rows = rows.filter((o) => o.deliveryAgentId === agentId);
     if (dateFrom) rows = rows.filter((o) => (o.orderDate || 0) >= new Date(dateFrom).getTime());
-    if (dateTo) rows = rows.filter((o) => (o.orderDate || 0) <= new Date(dateTo).getTime());
+    // dateTo is a date-only string ("YYYY-MM-DD"), which parses as that day's
+    // UTC midnight — without the +23:59:59.999 offset, an order placed any
+    // time after midnight on the end date itself would be wrongly excluded,
+    // making the end date effectively never included in the range.
+    if (dateTo) rows = rows.filter((o) => (o.orderDate || 0) <= new Date(dateTo).getTime() + 86399999);
     if (q) {
       const term = q.toLowerCase();
       rows = rows.filter((o) =>

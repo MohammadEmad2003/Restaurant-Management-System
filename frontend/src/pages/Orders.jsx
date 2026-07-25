@@ -191,7 +191,11 @@ export default function Orders() {
       setCollectionModalOpen(true);
       return;
     }
-    placeAndPrint();
+    // Non-delivery orders (the common walk-in/takeaway case) skip the
+    // 4-option collection modal and are paid immediately — cash sales are
+    // real money landing in the drawer right now, so refresh the shared
+    // figure the instant the order is created, same as the delivery paths do.
+    placeAndPrint().then((order) => { if (order && payment === 'cash') refreshCashDrawer(); });
   };
 
   const placeAndPrint = async (paymentTiming) => {

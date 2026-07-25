@@ -59,6 +59,8 @@ export default function CashAdvances() {
       await api.delete(`/cash-advances/${id}`);
       notify(t('cashAdvances.deleted', 'Cash advance deleted'));
       refetch();
+      // Deleting reverses whatever this advance had deducted from the drawer.
+      refreshCashDrawer();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
   };
 

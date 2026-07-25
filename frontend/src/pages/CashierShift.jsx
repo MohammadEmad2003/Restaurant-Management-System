@@ -5,6 +5,7 @@ import { useFetch } from '../hooks/useApi.js';
 import { api } from '../api/client.js';
 import { useUI } from '../store/ui.js';
 import { useAuth } from '../store/auth.js';
+import { usePosStats } from '../store/posStats.js';
 import { Card, PageHeader, Spinner, Dropdown, DataTable, Badge } from '../components/ui.jsx';
 import { money, shortName, datetime } from '../utils/format.js';
 
@@ -40,6 +41,10 @@ export default function CashierShift() {
       notify(openMsg, d === 0 ? 'success' : 'info');
       setOpeningFloat('');
       reload();
+      // Opening a shift may adjust the Cash Ledger (an over/short difference)
+      // — refresh the shared Cash Drawer figure so the Topbar/Dashboard/POS
+      // reflect it immediately instead of showing a stale number.
+      usePosStats.getState().refreshCashDrawer();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
     finally { setBusy(false); }
   };
@@ -58,6 +63,9 @@ export default function CashierShift() {
       notify(t('cashierShift.closed', 'Shift closed & saved'));
       setCountedCash(''); setNextCashierId(''); setDepositedToOwner(false); setConfirmed(false); setNotes('');
       reload();
+      // Closing with "deposited to the owner" removes that cash from the
+      // drawer — refresh the shared figure immediately either way.
+      usePosStats.getState().refreshCashDrawer();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
     finally { setBusy(false); }
   };

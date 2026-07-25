@@ -4,6 +4,7 @@ import { useFetch } from '../hooks/useApi.js';
 import { usePaginated } from '../hooks/usePaginated.js';
 import { api } from '../api/client.js';
 import { useUI } from '../store/ui.js';
+import { usePosStats } from '../store/posStats.js';
 import { PageHeader, Card, DataTable, Modal, Input, Select, Button } from '../components/ui.jsx';
 import { money } from '../utils/format.js';
 
@@ -40,6 +41,8 @@ export default function PettyCash() {
       setShowModal(false);
       setForm(blank());
       refetch();
+      // Petty cash is real cash leaving the drawer — reflect it immediately.
+      usePosStats.getState().refreshCashDrawer();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
   };
 

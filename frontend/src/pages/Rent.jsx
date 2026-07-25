@@ -4,6 +4,7 @@ import { useFetch } from '../hooks/useApi.js';
 import { usePaginated } from '../hooks/usePaginated.js';
 import { api } from '../api/client.js';
 import { useUI } from '../store/ui.js';
+import { usePosStats } from '../store/posStats.js';
 import { PageHeader, Card, DataTable, Badge, Button, Modal, Input, Select } from '../components/ui.jsx';
 import { money, date } from '../utils/format.js';
 
@@ -35,11 +36,14 @@ export default function Rent() {
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
   };
 
-  const pay = async (id) => {
+  const pay = async (row) => {
     try {
-      await api.patch(`/rents/${id}/pay`, { paymentMethod: 'cash' });
+      // Pay it the way the record itself says it's paid — only an actual
+      // cash payment should ever touch the physical Cash Drawer.
+      await api.patch(`/rents/${row.id}/pay`, { paymentMethod: row.paymentMethod || 'cash' });
       notify(t('rents.paid', 'Rent marked as paid'));
       refetch();
+      if ((row.paymentMethod || 'cash') === 'cash') usePosStats.getState().refreshCashDrawer();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
   };
 
@@ -49,6 +53,9 @@ export default function Rent() {
       await api.delete(`/rents/${id}`);
       notify(t('rents.deleted', 'Rent record deleted'));
       refetch();
+      // If it had already been paid in cash, deleting it reverses that
+      // deduction — refresh either way, it's a no-op cost if nothing changed.
+      usePosStats.getState().refreshCashDrawer();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
   };
 
@@ -65,7 +72,7 @@ export default function Rent() {
       key: '_act', label: t('common.actions'), render: (_, row) => (
         <div className="row" style={{ gap: 6 }}>
           {(row.status === 'upcoming' || row.status === 'overdue') && (
-            <button className="btn btn--sm btn--primary" onClick={() => pay(row.id)}>{t('rents.pay')}</button>
+            <button className="btn btn--sm btn--primary" onClick={() => pay(row)}>{t('rents.pay')}</button>
           )}
           <button className="btn btn--sm btn--danger" onClick={() => del(row.id)}>{t('common.delete')}</button>
         </div>

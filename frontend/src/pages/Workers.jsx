@@ -5,6 +5,7 @@ import { useFetch } from '../hooks/useApi.js';
 import { usePaginated } from '../hooks/usePaginated.js';
 import { api } from '../api/client.js';
 import { useUI } from '../store/ui.js';
+import { usePosStats } from '../store/posStats.js';
 import { Card, PageHeader, Spinner, DataTable, Badge, Modal, Avatar, Phone } from '../components/ui.jsx';
 import { money, shortName, datetime } from '../utils/format.js';
 
@@ -89,6 +90,8 @@ export default function Workers() {
       const { data: res } = await api.post('/salaries/run', { month });
       notify(`${t('workers.payrollDone', 'Payroll done')} · ${res.paidNow}/${res.workers} · ${money(res.total)}`);
       setPayOpen(false); refetch();
+      // Every paid salary is real cash leaving the drawer — reflect it immediately.
+      usePosStats.getState().refreshCashDrawer();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
     finally { setPaying(false); }
   };

@@ -38,6 +38,8 @@ import { supplierService } from '../services/supplierService.js';
 import { settingsService } from '../services/settingsService.js';
 import { createCrudService } from '../services/baseService.js';
 import { deliveryAgentService } from '../services/deliveryAgentService.js';
+import { pettyCashService } from '../services/pettyCashService.js';
+import { rentService } from '../services/rentService.js';
 import { syncEngine } from '../sync/syncEngine.js';
 import { repo } from '../repositories/index.js';
 
@@ -232,7 +234,7 @@ router.patch('/salaries/:id/adjust', auth, rbac('ADMIN'), h(async (req, res) => 
 router.patch('/salaries/:id/pay', auth, rbac('ADMIN'), h(async (req, res) => res.json(await salaryService.markPaid(req.params.id, req.user))));
 
 /* ──────────────────── PETTY CASH ──────────────────────── */
-const pettyCashSvc = createCrudService('expenses', { entityName: 'petty_cash' });
+const pettyCashSvc = pettyCashService;
 // Petty cash shares the `expenses` collection, so list only the petty-cash rows.
 router.get('/petty-cash', auth, h(async (req, res) => res.json(await pettyCashSvc.list({ ...req.query, type: 'petty_cash' }, req.user))));
 router.post('/petty-cash', auth, (req, res, next) => {
@@ -244,7 +246,7 @@ router.patch('/petty-cash/:id', auth, rbac('ADMIN'), validateBody('expenses', { 
 router.delete('/petty-cash/:id', auth, rbac('ADMIN'), h(async (req, res) => { await pettyCashSvc.remove(req.params.id, req.user); res.status(204).end(); }));
 
 /* ──────────────────────── RENTS ────────────────────────── */
-const rentsSvc = createCrudService('rents', { entityName: 'rent' });
+const rentsSvc = rentService;
 router.get('/rents', auth, h(async (req, res) => res.json(await rentsSvc.list(req.query, req.user))));
 router.post('/rents', auth, rbac('ADMIN'), validateBody('rents'), h(async (req, res) => {
   return res.status(201).json(await rentsSvc.create(req.body, req.user));
@@ -252,8 +254,7 @@ router.post('/rents', auth, rbac('ADMIN'), validateBody('rents'), h(async (req, 
 router.patch('/rents/:id', auth, rbac('ADMIN'), validateBody('rents', { partial: true }), h(async (req, res) => res.json(await rentsSvc.update(req.params.id, req.body, req.user))));
 router.delete('/rents/:id', auth, rbac('ADMIN'), h(async (req, res) => { await rentsSvc.remove(req.params.id, req.user); res.status(204).end(); }));
 router.patch('/rents/:id/pay', auth, rbac('ADMIN'), h(async (req, res) => {
-  const { paymentMethod = 'cash', receiptUrl } = req.body;
-  return res.json(await rentsSvc.update(req.params.id, { status: 'paid', paidDate: new Date().toISOString(), paymentMethod, receiptUrl }, req.user));
+  return res.json(await rentsSvc.pay(req.params.id, req.body, req.user));
 }));
 router.get('/rents/upcoming', auth, h(async (req, res) => {
   const rents = await rentsSvc.list({ status: ['upcoming', 'overdue'] }, req.user);

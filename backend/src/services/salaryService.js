@@ -2,6 +2,8 @@ import { repo } from '../repositories/index.js';
 import { createCrudService } from './baseService.js';
 import { settingsService } from './settingsService.js';
 import { cashAdvanceService } from './cashAdvanceService.js';
+import { cashLedgerService } from './cashLedgerService.js';
+import { cashierShiftService } from './cashierShiftService.js';
 import { HttpError } from '../middleware/errorHandler.js';
 
 const base = createCrudService('salaries', { entityName: 'salary' });
@@ -130,6 +132,19 @@ export const salaryService = {
       refId: updated.workerId, date: new Date().toISOString().slice(0, 10),
       restaurantId: user?.restaurantId,
     });
+    // Real cash leaving the drawer — paid out the same way petty cash and
+    // cash advances are, so the Cash Drawer total reflects it immediately.
+    if (updated.netPay) {
+      const openShift = await cashierShiftService.openShiftFor(user?.sub, user);
+      await cashLedgerService.record({
+        restaurantId: user?.restaurantId,
+        amount: -updated.netPay,
+        transactionType: 'SALARY_PAID',
+        orderId: updated.id,
+        cashierShiftId: openShift?.id || null,
+        createdByUserId: user?.sub,
+      });
+    }
     return updated;
   },
 };

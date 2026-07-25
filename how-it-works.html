@@ -1,0 +1,447 @@
+<title>How Restro Works — A Guide for Restaurant Owners</title>
+<style>
+:root{
+  --bg:#f5f2ea;
+  --surface:#ffffff;
+  --ink:#26241d;
+  --ink-soft:#5c584a;
+  --muted:#94907e;
+  --border:#e3ddc9;
+  --accent:#b7811a;
+  --accent-soft:#f1e2bd;
+  --accent-ink:#7a5610;
+  --good:#33724a;
+  --good-bg:#e2eee3;
+  --warn:#946a12;
+  --warn-bg:#f5ecd6;
+  --divider:#d8d0b8;
+  --r:14px;
+}
+:root[data-theme="dark"]{
+  --bg:#1c1a14;
+  --surface:#252219;
+  --ink:#ece7d9;
+  --ink-soft:#bdb6a2;
+  --muted:#847e6c;
+  --border:#3a3527;
+  --accent:#e0a53f;
+  --accent-soft:#3c2f16;
+  --accent-ink:#f0c274;
+  --good:#7ec293;
+  --good-bg:#20301f;
+  --warn:#e0b954;
+  --warn-bg:#332911;
+  --divider:#3a3527;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#1c1a14; --surface:#252219; --ink:#ece7d9; --ink-soft:#bdb6a2; --muted:#847e6c;
+    --border:#3a3527; --accent:#e0a53f; --accent-soft:#3c2f16; --accent-ink:#f0c274;
+    --good:#7ec293; --good-bg:#20301f; --warn:#e0b954; --warn-bg:#332911; --divider:#3a3527;
+  }
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  line-height:1.65; -webkit-font-smoothing:antialiased;
+}
+.serif{font-family:Georgia,"Iowan Old Style","Palatino Linotype",serif;}
+::selection{background:var(--accent-soft); color:var(--accent-ink);}
+a{color:var(--accent-ink);}
+
+.wrap{max-width:820px; margin:0 auto; padding:0 24px 100px;}
+
+/* ---------- Hero ---------- */
+.hero{
+  max-width:820px; margin:0 auto; padding:88px 24px 56px; text-align:center;
+  position:relative;
+}
+.hero::after{
+  content:""; display:block; width:52px; height:3px; background:var(--accent);
+  margin:28px auto 0; border-radius:2px;
+}
+.eyebrow{
+  text-transform:uppercase; letter-spacing:.16em; font-size:12px; font-weight:700;
+  color:var(--accent-ink); margin:0 0 18px;
+}
+h1.serif{
+  font-size:clamp(34px,5.4vw,54px); margin:0 0 20px; letter-spacing:-0.01em;
+  text-wrap:balance; font-weight:400; line-height:1.12;
+}
+.lede{
+  font-size:18px; color:var(--ink-soft); max-width:56ch; margin:0 auto; text-wrap:balance;
+}
+
+/* ---------- Sections ---------- */
+section{padding:52px 0;}
+section.divide{border-top:1px solid var(--divider);}
+.kicker{
+  display:flex; align-items:center; gap:12px; margin-bottom:10px;
+}
+.kicker .num{
+  font-size:13px; font-weight:700; color:var(--accent-ink); background:var(--accent-soft);
+  width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+  flex-shrink:0; font-variant-numeric:tabular-nums;
+}
+h2.serif{font-size:28px; margin:0; font-weight:400; letter-spacing:-0.01em;}
+.section-lede{color:var(--ink-soft); font-size:15.5px; max-width:62ch; margin:14px 0 26px;}
+
+.feature-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+@media (max-width:640px){.feature-grid{grid-template-columns:1fr;}}
+.feature{
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--r);
+  padding:20px 22px;
+}
+.feature h3{font-size:15px; margin:0 0 8px; font-weight:700;}
+.feature p{font-size:14px; color:var(--ink-soft); margin:0;}
+.feature .icon{
+  width:34px; height:34px; border-radius:9px; background:var(--accent-soft); color:var(--accent-ink);
+  display:flex; align-items:center; justify-content:center; margin-bottom:12px;
+}
+.feature .icon svg{width:18px; height:18px;}
+
+p{margin:0 0 14px; max-width:66ch;}
+ul{margin:0 0 14px; padding-inline-start:22px;}
+li{margin-bottom:8px; max-width:62ch;}
+
+/* ---------- Journey / flow ---------- */
+.journey{display:flex; flex-direction:column; gap:0; margin:8px 0 6px;}
+.stop{display:flex; gap:18px; position:relative; padding-bottom:26px;}
+.stop:last-child{padding-bottom:0;}
+.stop::before{
+  content:""; position:absolute; left:15px; top:34px; bottom:0; width:1px; background:var(--divider);
+}
+.stop:last-child::before{display:none;}
+.stop .dot{
+  width:32px; height:32px; border-radius:50%; background:var(--surface); border:1px solid var(--border);
+  display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:13px; font-weight:700;
+  color:var(--accent-ink); z-index:1; font-variant-numeric:tabular-nums;
+}
+.stop .body{padding-top:4px;}
+.stop h4{margin:0 0 4px; font-size:15.5px; font-weight:700;}
+.stop p{margin:0; font-size:14px; color:var(--ink-soft);}
+
+/* ---------- Payment paths ---------- */
+.paths{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:20px 0;}
+@media (max-width:760px){.paths{grid-template-columns:1fr 1fr;}}
+@media (max-width:440px){.paths{grid-template-columns:1fr;}}
+.path{
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--r);
+  padding:16px; text-align:left;
+}
+.path .tag{
+  display:inline-block; font-size:11px; font-weight:700; padding:3px 9px; border-radius:99px;
+  text-transform:uppercase; letter-spacing:.04em; margin-bottom:10px;
+}
+.path .tag.paid{background:var(--good-bg); color:var(--good);}
+.path .tag.wait{background:var(--warn-bg); color:var(--warn);}
+.path .tag.stop{background:var(--border); color:var(--ink-soft);}
+.path h4{font-size:14px; margin:0 0 6px;}
+.path p{font-size:13px; color:var(--ink-soft); margin:0;}
+
+/* ---------- Roles ---------- */
+.roles{display:grid; grid-template-columns:repeat(3,1fr); gap:14px;}
+@media (max-width:700px){.roles{grid-template-columns:1fr;}}
+.role{background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:18px 20px;}
+.role .tag{
+  font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em;
+  color:var(--accent-ink); background:var(--accent-soft); padding:3px 10px; border-radius:99px;
+}
+.role h4{margin:12px 0 8px; font-size:15px;}
+.role p{font-size:13.5px; color:var(--ink-soft); margin:0;}
+
+/* ---------- Quiet strip ---------- */
+.strip{
+  display:flex; flex-wrap:wrap; gap:10px 28px; padding:22px 0; border-top:1px solid var(--divider);
+  border-bottom:1px solid var(--divider); font-size:14px; color:var(--ink-soft);
+}
+.strip b{color:var(--ink); font-weight:700;}
+
+footer{
+  text-align:center; color:var(--muted); font-size:13px; padding-top:56px;
+}
+
+/* ---------- Quick jump ---------- */
+.jump{
+  display:flex; flex-wrap:wrap; justify-content:center; gap:8px; margin:32px auto 0; max-width:640px;
+}
+.jump a{
+  font-size:12.5px; font-weight:600; color:var(--ink-soft); text-decoration:none;
+  border:1px solid var(--border); padding:6px 13px; border-radius:99px; background:var(--surface);
+}
+.jump a:hover{color:var(--accent-ink); border-color:var(--accent);}
+section{scroll-margin-top:20px;}
+
+/* ---------- Steps (getting started) ---------- */
+.steps{counter-reset:step; display:flex; flex-direction:column; gap:14px; margin:8px 0 6px;}
+.step-card{
+  display:flex; gap:16px; background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--r); padding:16px 20px; align-items:flex-start;
+}
+.step-card .num2{
+  counter-increment:step; font-family:Georgia,serif; font-size:22px; color:var(--accent-ink);
+  min-width:28px; font-variant-numeric:tabular-nums;
+}
+.step-card .num2::before{content:counter(step);}
+.step-card h4{margin:0 0 4px; font-size:15px;}
+.step-card p{margin:0; font-size:14px; color:var(--ink-soft);}
+
+/* ---------- FAQ ---------- */
+.faq{display:flex; flex-direction:column; gap:10px;}
+.faq details{
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--r);
+  padding:4px 20px;
+}
+.faq summary{
+  cursor:pointer; padding:14px 0; font-weight:700; font-size:15px; list-style:none;
+  display:flex; justify-content:space-between; align-items:center; gap:12px;
+}
+.faq summary::-webkit-details-marker{display:none;}
+.faq summary::after{
+  content:"+"; font-size:20px; font-weight:400; color:var(--muted); flex-shrink:0;
+  font-family:Georgia,serif; line-height:1;
+}
+.faq details[open] summary::after{content:"–";}
+.faq p{font-size:14px; color:var(--ink-soft); margin:0 0 16px; max-width:60ch;}
+</style>
+
+<div class="hero">
+  <p class="eyebrow">A Guide for Restaurant Owners</p>
+  <h1 class="serif">Everything that happens between an order and a closed drawer, in one place.</h1>
+  <p class="lede">Restro is the system running the front counter, the kitchen, the delivery riders, and the books — all at once, for one restaurant or a whole group of them. This page walks through what it actually does, in plain terms.</p>
+  <nav class="jump">
+    <a href="#ordering">Taking an order</a>
+    <a href="#payments">Getting paid</a>
+    <a href="#journey">An order's journey</a>
+    <a href="#drawer">The cash drawer</a>
+    <a href="#dashboard">Dashboard</a>
+    <a href="#menu">Menu &amp; products</a>
+    <a href="#customers">Customers &amp; loyalty</a>
+    <a href="#stock">Stock &amp; waste</a>
+    <a href="#team">The team</a>
+    <a href="#money">Money beyond the drawer</a>
+    <a href="#reservations2">Reservations</a>
+    <a href="#branches">Multiple branches</a>
+    <a href="#roles">Who can do what</a>
+    <a href="#start">Getting started</a>
+    <a href="#faq">Questions</a>
+  </nav>
+</div>
+
+<div class="wrap">
+
+  <section id="ordering">
+    <div class="kicker"><span class="num">1</span><h2 class="serif">Taking an order</h2></div>
+    <p class="section-lede">The counter screen is where every sale starts — dine-in, takeaway, or delivery — and it's built to be fast enough for a lunchtime rush.</p>
+    <div class="feature-grid">
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l2-5h14l2 5M3 9h18M3 9v10a1 1 0 001 1h16a1 1 0 001-1V9"/></svg></div>
+        <h3>One screen, any order type</h3>
+        <p>A cashier picks products, adjusts quantities, and attaches a customer — the same flow whether it's a table, a pickup, or a courier run.</p>
+      </div>
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
+        <h3>Kitchen sees it instantly</h3>
+        <p>Once an order is sent, it appears on the kitchen display as a ticket — no paper slips changing hands, no shouting orders across the pass.</p>
+      </div>
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h9l3 3v15H6z"/><path d="M9 8h6M9 12h6M9 16h4"/></svg></div>
+        <h3>Receipts print automatically</h3>
+        <p>Every order that's charged, printed for later, or handed to a courier gets its own receipt — in Arabic or English, matched to how it was actually paid.</p>
+      </div>
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-4.35-9.5-8.5C.8 8.6 2.4 5 6 5c2 0 3.5 1.2 4 2.5.5-1.3 2-2.5 4-2.5 3.6 0 5.2 3.6 3.5 7.5C19 16.65 12 21 12 21z"/></svg></div>
+        <h3>Customers are remembered</h3>
+        <p>A returning customer's name, phone, and address are already on file — no re-typing an address for the fifth delivery this month.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="divide" id="payments">
+    <div class="kicker"><span class="num">2</span><h2 class="serif">Getting paid — four honest ways</h2></div>
+    <p class="section-lede">Not every order gets paid at the counter. A delivery rider might collect cash hours later; a regular customer might run a tab until the end of the day. Restro tracks each path differently, on purpose.</p>
+    <div class="paths">
+      <div class="path">
+        <span class="tag paid">Paid now</span>
+        <h4>Cash or card, on the spot</h4>
+        <p>Receipt prints, the sale lands in the drawer immediately. Nothing left to chase.</p>
+      </div>
+      <div class="path">
+        <span class="tag wait">Pay at end of day</span>
+        <h4>Collected from the rider later</h4>
+        <p>Receipt prints now; the money is counted once the delivery agent settles up.</p>
+      </div>
+      <div class="path">
+        <span class="tag wait">Print only, not paid</span>
+        <h4>A running tab</h4>
+        <p>The receipt goes out with the order, but payment is still owed — tracked the same way as an end-of-day delivery.</p>
+      </div>
+      <div class="path">
+        <span class="tag stop">Cancelled</span>
+        <h4>As if it never happened</h4>
+        <p>No receipt, no charge, nothing added to the drawer. A clean undo.</p>
+      </div>
+    </div>
+    <p class="section-lede" style="margin-bottom:0">Anything still owed shows up on the <b style="color:var(--ink)">Pending Payments</b> screen — searchable by delivery rider, customer, order number, or date — until someone marks it collected.</p>
+  </section>
+
+  <section class="divide" id="journey">
+    <div class="kicker"><span class="num">3</span><h2 class="serif">One order's full journey</h2></div>
+    <p class="section-lede">Here's what actually happens behind a single delivery order placed on credit.</p>
+    <div class="journey">
+      <div class="stop"><div class="dot">1</div><div class="body"><h4>Cashier builds the order</h4><p>Picks the items, attaches the customer, assigns a delivery rider, and marks it "pay at end of day."</p></div></div>
+      <div class="stop"><div class="dot">2</div><div class="body"><h4>Receipt prints, rider leaves</h4><p>The order is now waiting — it doesn't touch the cash drawer yet.</p></div></div>
+      <div class="stop"><div class="dot">3</div><div class="body"><h4>It appears on Pending Payments</h4><p>Filed under that rider's name, with the order total and how long it's been waiting.</p></div></div>
+      <div class="stop"><div class="dot">4</div><div class="body"><h4>Rider returns with the cash</h4><p>A cashier finds the order (by rider, by name, or by order number) and taps <b style="color:var(--ink)">Collect</b>.</p></div></div>
+      <div class="stop"><div class="dot">5</div><div class="body"><h4>Drawer updates, instantly</h4><p>The cash total goes up by exactly that order's amount, the order disappears from the pending list, and no second receipt gets printed.</p></div></div>
+    </div>
+  </section>
+
+  <section class="divide" id="drawer">
+    <div class="kicker"><span class="num">4</span><h2 class="serif">Always knowing what's in the drawer</h2></div>
+    <p class="section-lede">Cash on hand isn't something anyone eyeballs at close — it's a running total, built from every sale and every collection as they happen.</p>
+    <div class="feature-grid">
+      <div class="feature">
+        <h3>One number, everywhere</h3>
+        <p>The counter, the manager's dashboard, and the pending-payments screen all read the same live figure — settle a payment on one screen and the others update without anyone refreshing.</p>
+      </div>
+      <div class="feature">
+        <h3>A record for every move</h3>
+        <p>Every peso or pound that enters or leaves the drawer — a sale, a collection, a cash advance, a cancelled order's reversal — leaves a paper trail behind it.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="divide" id="dashboard">
+    <div class="kicker"><span class="num">5</span><h2 class="serif">The dashboard</h2></div>
+    <p class="section-lede">The first screen an owner sees — a real-time read on how the restaurant is doing, not a pile of raw numbers to interpret.</p>
+    <div class="feature-grid">
+      <div class="feature"><h3>Today, at a glance</h3><p>Sales, order counts, and cash-in-drawer for the day, updating as orders come in rather than at end-of-shift.</p></div>
+      <div class="feature"><h3>Trends, not just totals</h3><p>Revenue and order charts over time, so a slow Tuesday or a busy weekend is visible, not just felt.</p></div>
+    </div>
+  </section>
+
+  <section class="divide" id="menu">
+    <div class="kicker"><span class="num">6</span><h2 class="serif">Menu &amp; products</h2></div>
+    <p class="section-lede">Every item sold at the counter starts here — its price, its cost to make, and what that means for margin.</p>
+    <div class="feature-grid">
+      <div class="feature"><h3>Price and cost, side by side</h3><p>Set what a dish sells for and what it costs to make, so profit per item is visible, not guessed at.</p></div>
+      <div class="feature"><h3>Change it once, everywhere</h3><p>Update a price or take an item off the menu, and every till reflects it on the next order — no reprinting a paper menu.</p></div>
+    </div>
+  </section>
+
+  <section class="divide" id="customers">
+    <div class="kicker"><span class="num">7</span><h2 class="serif">Customers, loyalty &amp; complaints</h2></div>
+    <p class="section-lede">The people who keep coming back are worth remembering — and the ones who had a bad experience are worth following up on.</p>
+    <div class="feature-grid">
+      <div class="feature"><h3>A customer list, not a notebook</h3><p>Name, phone, and delivery address saved once and reused on every future order — searchable by phone number at the counter.</p></div>
+      <div class="feature"><h3>Loyalty points, earned automatically</h3><p>Regulars build up points on every purchase with no extra step for the cashier.</p></div>
+      <div class="feature"><h3>Complaints, tracked to resolution</h3><p>A complaint gets logged against the customer and order it belongs to, so it doesn't just disappear after the conversation ends.</p></div>
+    </div>
+  </section>
+
+  <section class="divide" id="stock">
+    <div class="kicker"><span class="num">8</span><h2 class="serif">Stock &amp; waste</h2></div>
+    <p class="section-lede">Knowing what's in the kitchen before you run out of it — and knowing where it went if it didn't get sold.</p>
+    <div class="feature-grid">
+      <div class="feature"><h3>Stock levels &amp; low-stock alerts</h3><p>Ingredient quantities update as they're used, with a warning before something runs out mid-service.</p></div>
+      <div class="feature"><h3>Goods checks &amp; waste logging</h3><p>Damaged, expired, or missing stock gets logged with a reason and a photo — so shrinkage has an explanation attached to it, not a shrug.</p></div>
+    </div>
+  </section>
+
+  <section class="divide" id="team">
+    <div class="kicker"><span class="num">9</span><h2 class="serif">The team</h2></div>
+    <p class="section-lede">Everything tied to a member of staff lives on their one record — from the moment they clock in to the day they're paid.</p>
+    <div class="feature-grid">
+      <div class="feature"><h3>Time clock &amp; attendance</h3><p>Staff clock in and out; lateness and overtime are tracked automatically and can be excused or approved by a manager.</p></div>
+      <div class="feature"><h3>Scheduling</h3><p>Build the week's shifts once, and every worker sees where they're expected to be.</p></div>
+      <div class="feature"><h3>Salaries &amp; cash advances</h3><p>Pay is calculated from attendance and overtime, and any cash advanced against a future paycheck is tracked and deducted automatically.</p></div>
+    </div>
+  </section>
+
+  <section class="divide" id="money">
+    <div class="kicker"><span class="num">10</span><h2 class="serif">Money beyond the drawer</h2></div>
+    <p class="section-lede">Cash sales are only part of the picture — rent, petty cash, and the wider profit-and-loss all live in the same place.</p>
+    <div class="feature-grid">
+      <div class="feature"><h3>Petty cash</h3><p>Small day-to-day expenses logged as they happen, instead of a shoebox of receipts at month-end.</p></div>
+      <div class="feature"><h3>Rent &amp; recurring costs</h3><p>Fixed monthly costs tracked alongside daily sales, so profit isn't calculated on revenue alone.</p></div>
+      <div class="feature"><h3>Full profit &amp; loss</h3><p>Income, expenses, and cash flow rolled into one finance view.</p></div>
+      <div class="feature"><h3>Exportable reports</h3><p>Sales, staff, and P&amp;L reports as PDF or Excel — ready to hand to an accountant or a bank.</p></div>
+    </div>
+  </section>
+
+  <section class="divide" id="reservations2">
+    <div class="kicker"><span class="num">11</span><h2 class="serif">Reservations</h2></div>
+    <p class="section-lede">Bookings and a waitlist in the same system as everything else, so the host stand isn't a notebook that only one person can read.</p>
+  </section>
+
+  <section class="divide" id="branches">
+    <div class="kicker"><span class="num">12</span><h2 class="serif">Multiple branches, kept in sync</h2></div>
+    <p class="section-lede">One system can run a single restaurant or a whole group of them, without their data ever mixing.</p>
+    <div class="feature-grid">
+      <div class="feature"><h3>Fully separate data</h3><p>Each restaurant's orders, customers, staff, and cash figures are walled off from every other one on the platform — nothing crosses over.</p></div>
+      <div class="feature"><h3>Settings per restaurant</h3><p>Tax rates, printer setup, and business details are configured once per location and stay local to it.</p></div>
+      <div class="feature"><h3>A visible sync status</h3><p>A dedicated screen shows whether a device is fully synced with the cloud or still catching up — no wondering if a change went through.</p></div>
+    </div>
+  </section>
+
+  <section class="divide" id="roles">
+    <div class="kicker"><span class="num">13</span><h2 class="serif">Who can do what</h2></div>
+    <p class="section-lede">Three levels of access, so a cashier can run a full shift without needing an owner in the building — and an owner can see everything a cashier can't touch.</p>
+    <div class="roles">
+      <div class="role"><span class="tag">Cashier</span><h4>Runs the floor</h4><p>Takes orders, manages customers, collects pending payments, sees the drawer total.</p></div>
+      <div class="role"><span class="tag">Admin / Owner</span><h4>Runs the restaurant</h4><p>Everything a cashier can do, plus staff, reports, pricing, and settings.</p></div>
+      <div class="role"><span class="tag">Super Admin</span><h4>Runs the platform</h4><p>Creates restaurants, issues their licenses, and manages accounts across every location — reserved for the operator running the software itself.</p></div>
+    </div>
+  </section>
+
+  <div class="strip">
+    <span><b>Works offline.</b> A lost internet connection doesn't stop a shift — the app keeps running locally and catches up once it's back.</span>
+    <span><b>Arabic &amp; English.</b> Every screen, including the layout direction, switches fully between the two.</span>
+  </div>
+
+  <section id="start">
+    <div class="kicker"><span class="num">14</span><h2 class="serif">Getting started</h2></div>
+    <p class="section-lede">Setting up a new restaurant takes minutes, not a technician visit.</p>
+    <div class="steps">
+      <div class="step-card"><div class="num2"></div><div><h4>The platform operator creates your restaurant</h4><p>They set up your restaurant's account and hand you a license — this fixes how many devices you can use and how many days you can run offline before reconnecting.</p></div></div>
+      <div class="step-card"><div class="num2"></div><div><h4>The owner activates it</h4><p>The first sign-in asks for a one-time activation code. After that, it's just a username and password from any registered device.</p></div></div>
+      <div class="step-card"><div class="num2"></div><div><h4>Add products, staff, and delivery riders</h4><p>Set up the menu, add cashiers and delivery agents, and the counter is ready to take its first order.</p></div></div>
+      <div class="step-card"><div class="num2"></div><div><h4>Cashiers sign in and start selling</h4><p>No activation step for staff — they just log in with the username and password the owner gave them.</p></div></div>
+    </div>
+  </section>
+
+  <section class="divide" id="faq">
+    <div class="kicker"><span class="num">15</span><h2 class="serif">Common questions</h2></div>
+    <div class="faq">
+      <details>
+        <summary>What happens if the internet drops mid-shift?</summary>
+        <p>Nothing stops. Orders, payments, and everything else keep working against the device's own local copy of the data. Once the connection returns, it quietly syncs back up — nobody has to redo anything.</p>
+      </details>
+      <details>
+        <summary>Can two members of staff share the same name?</summary>
+        <p>Yes. Every delivery rider and every staff account is tracked by an internal ID, not by their display name — so two riders both named "Ahmed" are never confused with each other when settling payments.</p>
+      </details>
+      <details>
+        <summary>Can I use it on more than one till or device?</summary>
+        <p>Yes, up to the number of devices set on your license. Every device signs in independently, and everything they do shows up on every other screen immediately.</p>
+      </details>
+      <details>
+        <summary>Is one restaurant's data ever visible to another?</summary>
+        <p>No. Every restaurant on the platform is completely walled off from every other one — orders, customers, staff, and cash figures never cross between them.</p>
+      </details>
+      <details>
+        <summary>What happens when a license expires?</summary>
+        <p>The restaurant is notified before it happens. Once expired, staff are blocked from signing in until the owner renews it — no data is lost while that's sorted out.</p>
+      </details>
+      <details>
+        <summary>Do I need to print a second receipt when a pending payment is finally collected?</summary>
+        <p>No — the receipt already went out when the order was placed. Collecting the payment later just settles the money; it doesn't print anything new.</p>
+      </details>
+    </div>
+  </section>
+
+  <footer>Restro — a guide for the people who run the restaurant, not the people who built it.</footer>
+</div>

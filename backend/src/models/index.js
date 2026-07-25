@@ -37,7 +37,8 @@ export const schemas = {
     status: t('string', { enum: ['open', 'closed'], default: 'open' }),
     openedAt: t('number', { required: true }),
     closedAt: t('number'),
-    openingFloat: t('number', { default: 0 }),   // starting cash; 0 = previous cash deposited to owner
+    openingFloat: t('number', { default: 0 }),   // cash the cashier physically counted at open time
+    openingDifference: t('number', { default: 0 }), // openingFloat - Cash Drawer balance at open time (+ over / - short)
     cashSales: t('number', { default: 0 }),       // cash orders during the shift
     expectedCash: t('number', { default: 0 }),    // openingFloat + cashSales
     countedCash: t('number', { default: 0 }),     // cash the cashier physically counted
@@ -83,7 +84,7 @@ export const schemas = {
     amount: t('number', { required: true }), // signed: positive = cash in, negative = cash out
     transactionType: t('string', {
       required: true,
-      enum: ['CASH_SALE', 'DELIVERY_AGENT_PAID_NOW', 'PENDING_PAYMENT_SETTLEMENT', 'SHIFT_OPEN_FLOAT', 'SHIFT_CLOSE_ADJUSTMENT', 'CASH_ADVANCE', 'ORDER_CANCELLED_REVERSAL'],
+      enum: ['CASH_SALE', 'DELIVERY_AGENT_PAID_NOW', 'PENDING_PAYMENT_SETTLEMENT', 'SHIFT_OPEN_FLOAT', 'SHIFT_OPEN_ADJUSTMENT', 'SHIFT_CLOSE_ADJUSTMENT', 'CASH_ADVANCE', 'ORDER_CANCELLED_REVERSAL'],
     }),
     orderId: t('string'),
     cashierShiftId: t('string'), // nullable — optional attribution only, never a precondition

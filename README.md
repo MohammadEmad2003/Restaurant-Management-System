@@ -7,6 +7,7 @@ A complete, **offline-first** restaurant management platform.
 
 📐 The complete architecture & specification lives in **[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)**.
 🚀 A performance investigation & refactor (startup time, write latency, bundle size) is written up in **[REFACTOR_PLAN.md](REFACTOR_PLAN.md)**.
+🧭 A guided walkthrough of how the system actually fits together (storage model, roles, licensing, delivery payments, cash ledger) is in **[architecture-report.html](architecture-report.html)** — open it in a browser.
 
 ---
 
@@ -15,10 +16,10 @@ A complete, **offline-first** restaurant management platform.
 | Operations | Business | People | System |
 |---|---|---|---|
 | Dashboard & Analytics | Products (cost/profit) | Clients (CRM) | Multi-Branch |
-| Orders / POS | Inventory + alerts | Loyalty program | Audit Logs |
+| Orders / POS | Inventory + alerts | Loyalty program | Multi-tenant licensing |
 | Kitchen Display (KDS) | Goods Check / Waste | Reservations + waitlist | Offline Sync engine |
-| | Finance (P&L, cash flow) | Workers + salaries | Settings |
-| | Reports (PDF + Excel) | Attendance + overtime | Auth + RBAC |
+| Delivery Agents & Pending Payments | Finance (P&L, cash flow) | Workers + salaries | Settings |
+| Cash Drawer & Cash Ledger | Reports (PDF + Excel) | Attendance + overtime | Auth + RBAC |
 | | Bulk Excel import | Employee Scheduling | AR/EN + RTL |
 
 ---
@@ -112,7 +113,7 @@ Restaurant/
 ├── backend/                      # Node.js + Express API
 │   ├── src/
 │   │   ├── config/  models/  repositories/  (local JSON + Supabase)
-│   │   ├── services/  controllers via routes/  middleware/  (auth, rbac, audit)
+│   │   ├── services/  controllers via routes/  middleware/  (auth, rbac, rate-limit)
 │   │   ├── sync/     (connectivity, outbox, conflict resolution)
 │   │   ├── utils/    (pdf, excel, hash)   seed/  (mock data)
 │   └── .env.example
@@ -151,16 +152,14 @@ background. A few things matter for keeping it fast as data grows:
   its Chromium download is skipped by default (`backend/.npmrc`); reports fall back
   to the built-in `pdfkit` renderer automatically if it isn't installed.
 - **Local-store writes are async, coalesced and compact.** A burst of writes in the
-  same tick (e.g. an order + its audit log) becomes one non-blocking file write per
-  collection instead of several synchronous, pretty-printed ones. A flush also runs
-  on process exit so nothing pending is lost. Tune the coalescing window with
-  `STORE_FLUSH_MS` (default `30`ms).
+  same tick (e.g. an order plus its cash-ledger entry) becomes one non-blocking file
+  write per collection instead of several synchronous, pretty-printed ones. A flush
+  also runs on process exit so nothing pending is lost. Tune the coalescing window
+  with `STORE_FLUSH_MS` (default `30`ms).
 - **The sync outbox only grows when something will actually drain it.** If Supabase
   isn't configured (the default), writes are never queued for a sync that can't
   happen — this was previously the single biggest source of write latency, since
   the queue grew forever and every write re-serialised it in full.
-- **The audit log is capped locally** to the most recent `AUDIT_LOG_CAP` entries
-  (default `2000`) so `/api/audit-logs` and every write stay bounded.
 - **The frontend is code-split per route** (`React.lazy` + `Suspense`), with
   `recharts`, `react`/`react-router`, and `i18next` split into their own vendor
   chunks — the initial bundle no longer ships all 25 pages and the charting

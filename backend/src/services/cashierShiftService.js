@@ -47,8 +47,13 @@ async function resolveName(cashierId, fallback) {
 }
 
 /**
- * Open a cash-drawer shift for the signed-in cashier. `openingFloat` is the starting
- * cash in the box (0 when the previous cash was deposited to the owner).
+ * Open a cash-drawer shift for the signed-in cashier. `openingFloat` is the cash
+ * the cashier physically counted in the box just now — it is compared against
+ * (never added to) the Restaurant Cash Drawer balance, exactly like the count
+ * at close time: only the signed DIFFERENCE between what's physically there
+ * and what the ledger already expects is recorded, as an over/short
+ * adjustment. Blindly adding the counted amount would double-count cash the
+ * ledger already knows about (e.g. from the previous shift's sales).
  */
 async function open(user, { openingFloat } = {}) {
   const cashierId = user.sub;
@@ -61,6 +66,7 @@ async function open(user, { openingFloat } = {}) {
     openedAt: Date.now(),
     closedAt: null,
     openingFloat: float,
+    openingDifference: 0,
     cashSales: 0,
     expectedCash: float,
     countedCash: 0,
@@ -77,27 +83,36 @@ async function open(user, { openingFloat } = {}) {
   // Is this open fulfilling a handover from a shift that was closed WITHOUT
   // depositing to the owner? If so, that physical cash never left the
   // Restaurant's drawer and is still sitting in the ledger from the previous
-  // shift's untouched contribution (see close() below) — adding a fresh
-  // SHIFT_OPEN_FLOAT entry here would count the exact same cash twice.
+  // shift's untouched contribution (see close() below) — comparing/adjusting
+  // here would double-count or misreconcile the exact same cash.
   const priorShifts = await repo('cashierShifts').getAll({ restaurantId: user?.restaurantId, status: 'closed', nextCashierId: cashierId });
   const handoverSource = priorShifts.find((s) => !s.depositedToOwner && !s.handoverConsumed);
 
+  let openingDifference = 0;
   if (handoverSource) {
     // Mark it consumed so a second, unrelated shift open can't match it again.
     await repo('cashierShifts').update(handoverSource.id, { handoverConsumed: true });
-  } else if (float) {
-    // Genuinely new cash entering the drawer (a fresh float, not a handover
-    // continuation) — record it in the ledger so the Restaurant-wide balance
-    // reflects it immediately, independent of any other shift's state.
-    await cashLedgerService.record({
-      restaurantId: user?.restaurantId,
-      amount: float,
-      transactionType: 'SHIFT_OPEN_FLOAT',
-      cashierShiftId: shift.id,
-      createdByUserId: cashierId,
-    });
+  } else {
+    // Not a handover — the cashier is counting whatever is physically in the
+    // drawer right now. Compare that count against the Restaurant Cash
+    // Ledger's current balance and record only the difference (positive =
+    // more cash physically present than expected, negative = short), so the
+    // ledger ends up matching exactly what was counted, without ever
+    // re-adding cash the ledger already accounts for.
+    const currentBalance = await cashLedgerService.balance(user?.restaurantId);
+    openingDifference = round2(float - currentBalance);
+    if (openingDifference) {
+      await cashLedgerService.record({
+        restaurantId: user?.restaurantId,
+        amount: openingDifference,
+        transactionType: 'SHIFT_OPEN_ADJUSTMENT',
+        cashierShiftId: shift.id,
+        createdByUserId: cashierId,
+      });
+    }
   }
-  return shift;
+  if (openingDifference) await repo('cashierShifts').update(shift.id, { openingDifference });
+  return { ...shift, openingDifference };
 }
 
 /**

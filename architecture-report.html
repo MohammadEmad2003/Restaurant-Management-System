@@ -1,0 +1,364 @@
+<title>Restro App — Architecture Report</title>
+<style>
+:root{
+  --bg:#f7f5f1;
+  --surface:#ffffff;
+  --ink:#20211c;
+  --ink-soft:#54554c;
+  --muted:#8a8b80;
+  --border:#e2ded3;
+  --accent:#b5541f;
+  --accent-soft:#f0e0d2;
+  --accent-ink:#7a3812;
+  --good:#2f6d4a;
+  --good-bg:#e4f0e7;
+  --warn:#946a12;
+  --warn-bg:#f7ecd4;
+  --crit:#a4342a;
+  --crit-bg:#f6e2df;
+  --mono-bg:#efece3;
+  --r:10px;
+}
+:root[data-theme="dark"]{
+  --bg:#181916;
+  --surface:#212220;
+  --ink:#ece9e1;
+  --ink-soft:#b9b6ab;
+  --muted:#83837a;
+  --border:#34352f;
+  --accent:#e08a52;
+  --accent-soft:#3a2a1c;
+  --accent-ink:#f0b98a;
+  --good:#7fc99a;
+  --good-bg:#1c2e22;
+  --warn:#e0b954;
+  --warn-bg:#332a13;
+  --crit:#e08a80;
+  --crit-bg:#3a2220;
+  --mono-bg:#26261f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#181916; --surface:#212220; --ink:#ece9e1; --ink-soft:#b9b6ab; --muted:#83837a;
+    --border:#34352f; --accent:#e08a52; --accent-soft:#3a2a1c; --accent-ink:#f0b98a;
+    --good:#7fc99a; --good-bg:#1c2e22; --warn:#e0b954; --warn-bg:#332a13;
+    --crit:#e08a80; --crit-bg:#3a2220; --mono-bg:#26261f;
+  }
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+::selection{background:var(--accent-soft); color:var(--accent-ink);}
+a{color:var(--accent-ink);}
+.layout{
+  max-width:1180px; margin:0 auto; padding:48px 24px 120px;
+  display:grid; grid-template-columns:230px minmax(0,760px); column-gap:56px;
+  grid-template-areas:
+    "toc hero"
+    "toc main"
+    "toc footer";
+}
+@media (max-width:900px){
+  .layout{grid-template-columns:1fr; grid-template-areas:"hero" "main" "footer";}
+  .toc{display:none;}
+}
+
+.toc{grid-area:toc; position:sticky; top:32px; align-self:start; font-size:13px;}
+.toc-title{
+  text-transform:uppercase; letter-spacing:.08em; font-size:11px; font-weight:700;
+  color:var(--muted); margin-bottom:14px;
+}
+.toc ol{list-style:none; margin:0; padding:0; counter-reset:toc;}
+.toc li{counter-increment:toc; margin-bottom:2px;}
+.toc a{
+  display:flex; gap:8px; text-decoration:none; color:var(--ink-soft);
+  padding:6px 8px; border-radius:7px;
+}
+.toc a:hover{background:var(--surface); color:var(--ink);}
+.toc a::before{
+  content:counter(toc,decimal-leading-zero); color:var(--muted); font-variant-numeric:tabular-nums;
+  font-size:11px; padding-top:1px;
+}
+
+header.hero{grid-area:hero; max-width:760px; margin:0 0 8px;}
+
+.eyebrow{
+  text-transform:uppercase; letter-spacing:.12em; font-size:12px; font-weight:700;
+  color:var(--accent-ink); margin:0 0 10px;
+}
+h1{
+  font-size:clamp(28px,4vw,38px); margin:0 0 14px; letter-spacing:-.01em;
+  text-wrap:balance; font-weight:800;
+}
+.lede{font-size:17px; color:var(--ink-soft); max-width:62ch; margin:0 0 28px;}
+
+main{grid-area:main; min-width:0;}
+section{margin-bottom:52px; scroll-margin-top:24px;}
+h2{
+  font-size:22px; margin:0 0 6px; font-weight:800; letter-spacing:-.01em;
+  display:flex; align-items:baseline; gap:10px;
+}
+h2 .n{font-size:13px; color:var(--muted); font-weight:700; font-variant-numeric:tabular-nums;}
+h3{font-size:16px; margin:26px 0 10px; font-weight:700;}
+p{margin:0 0 14px; max-width:68ch;}
+ul,ol{margin:0 0 14px; padding-inline-start:22px;}
+li{margin-bottom:6px; max-width:64ch;}
+.section-intro{color:var(--ink-soft); margin-bottom:20px;}
+
+code, .mono{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:0.87em; background:var(--mono-bg); padding:.1em .4em; border-radius:5px;
+}
+pre{
+  background:var(--mono-bg); border:1px solid var(--border); border-radius:var(--r);
+  padding:14px 16px; overflow-x:auto; font-size:13px; line-height:1.55;
+}
+pre code{background:none; padding:0;}
+
+.card{
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--r);
+  padding:18px 20px;
+}
+.grid2{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+.grid3{display:grid; grid-template-columns:repeat(3,1fr); gap:14px;}
+@media (max-width:640px){ .grid2,.grid3{grid-template-columns:1fr;} }
+
+.tag{
+  display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:700;
+  padding:3px 9px; border-radius:99px; letter-spacing:.01em;
+}
+.tag.good{background:var(--good-bg); color:var(--good);}
+.tag.warn{background:var(--warn-bg); color:var(--warn);}
+.tag.crit{background:var(--crit-bg); color:var(--crit);}
+.tag.accent{background:var(--accent-soft); color:var(--accent-ink);}
+.tag.neutral{background:var(--mono-bg); color:var(--ink-soft);}
+
+table{width:100%; border-collapse:collapse; font-size:14px;}
+.table-wrap{overflow-x:auto; border:1px solid var(--border); border-radius:var(--r); margin-bottom:16px;}
+.table-wrap table{min-width:480px;}
+th,td{text-align:start; padding:9px 14px; border-bottom:1px solid var(--border); vertical-align:top;}
+th{
+  background:var(--mono-bg); font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+  color:var(--muted); font-weight:700;
+}
+tr:last-child td{border-bottom:none;}
+
+.flow{
+  display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:16px 0;
+  font-size:13.5px; font-weight:600;
+}
+.flow .step{
+  background:var(--surface); border:1px solid var(--border); border-radius:8px;
+  padding:8px 12px;
+}
+.flow .arrow{color:var(--muted); font-weight:400;}
+
+.callout{
+  border-inline-start:3px solid var(--accent); background:var(--accent-soft);
+  border-radius:0 var(--r) var(--r) 0; padding:12px 16px; margin:16px 0; font-size:14.5px;
+}
+.callout.crit{border-color:var(--crit); background:var(--crit-bg);}
+.callout strong{color:var(--accent-ink);}
+.callout.crit strong{color:var(--crit);}
+
+hr.rule{border:none; border-top:1px solid var(--border); margin:44px 0;}
+
+.roles-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:18px;}
+@media (max-width:640px){.roles-grid{grid-template-columns:1fr;}}
+.role-card{border:1px solid var(--border); border-radius:var(--r); padding:14px 16px; background:var(--surface);}
+.role-card h4{margin:0 0 6px; font-size:14px;}
+.role-card p{font-size:13px; color:var(--ink-soft); margin:0;}
+
+footer{
+  grid-area:footer; max-width:760px; color:var(--muted); font-size:13px;
+  border-top:1px solid var(--border); padding-top:20px; margin-top:8px;
+}
+</style>
+
+<div class="layout">
+  <nav class="toc">
+    <div class="toc-title">Contents</div>
+    <ol>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#storage">Storage model</a></li>
+      <li><a href="#identity">Identity &amp; roles</a></li>
+      <li><a href="#licensing">Licensing &amp; devices</a></li>
+      <li><a href="#pos">POS &amp; orders</a></li>
+      <li><a href="#payments">Delivery payments</a></li>
+      <li><a href="#cash">Cash drawer &amp; ledger</a></li>
+      <li><a href="#operations">Back-of-house modules</a></li>
+      <li><a href="#superadmin">Super Admin</a></li>
+      <li><a href="#frontend">Frontend shape</a></li>
+      <li><a href="#i18n">i18n &amp; offline</a></li>
+      <li><a href="#testing">Testing &amp; conventions</a></li>
+    </ol>
+  </nav>
+
+  <header class="hero">
+    <p class="eyebrow">Architecture report — Restro App</p>
+    <h1>How the restaurant management system actually works</h1>
+    <p class="lede">A walkthrough of the real system: a JSON-document backend wearing a SQL-shaped identity layer, three roles with sharply different blast radii, and a delivery-payments flow built to survive duplicate names and half-typed filters. Written from the current code, not the docs.</p>
+  </header>
+
+  <main>
+
+    <section id="overview">
+      <h2><span class="n">01</span> Overview</h2>
+      <p class="section-intro">Node/Express API, React SPA, same app also ships as an Electron desktop build. One restaurant per tenant, tenants isolated by <code>restaurantId</code> on almost every record, plus a separate Super Admin layer that sits above all restaurants.</p>
+      <div class="flow">
+        <span class="step">React SPA (Vite)</span><span class="arrow">→</span>
+        <span class="step">Express API</span><span class="arrow">→</span>
+        <span class="step">repo(collection)</span><span class="arrow">→</span>
+        <span class="step">Postgres JSON store <em>or</em> local files (offline)</span>
+      </div>
+      <p>The same frontend build runs online against Supabase/Postgres and offline against local JSON — the switch is <code>PERSISTENCE_MODE</code>, invisible to the UI.</p>
+    </section>
+
+    <section id="storage">
+      <h2><span class="n">02</span> Storage model</h2>
+      <p class="section-intro">Two different storage strategies coexist on purpose, split by how structured the data needs to be.</p>
+      <div class="grid2">
+        <div class="card">
+          <div class="tag accent">Real tables</div>
+          <p style="margin-top:10px">Only identity/session data gets actual Postgres DDL, because it needs constraints and cross-tenant lookups: <code>restaurants</code>, <code>users</code>, <code>super_admins</code>, <code>licenses</code>, <code>devices</code>, <code>login_sessions</code>.</p>
+        </div>
+        <div class="card">
+          <div class="tag neutral">JSON documents</div>
+          <p style="margin-top:10px">Every business entity is a row in one generic <code>records(collection, id, data)</code> table, validated against a hand-written schema — <code>orders</code>, <code>clients</code>, <code>products</code>, <code>cashierShifts</code>, <code>deliveryAgents</code>, <code>cashLedger</code>, and 16 more.</p>
+        </div>
+      </div>
+      <p>"Adding a field" to an order means adding a key to its schema entry in <code>backend/src/models/index.js</code> — not a migration. Old records simply lack the key until they're next written. All access goes through <code>repo(collection)</code>, which picks the Postgres-backed or local-JSON-backed repository transparently and applies a 2.5s read cache per collection (invalidated on every write) so dashboard/report pages don't fan out into dozens of reads per request.</p>
+    </section>
+
+    <section id="identity">
+      <h2><span class="n">03</span> Identity &amp; roles</h2>
+      <p class="section-intro">Three roles, one hard boundary between them: SUPER_ADMIN operates across restaurants, ADMIN and CASHIER are both scoped to exactly one.</p>
+      <div class="roles-grid">
+        <div class="role-card">
+          <h4><span class="tag crit">SUPER_ADMIN</span></h4>
+          <p>Creates restaurants, issues licenses, manages every restaurant's users, can suspend/delete/reset-password. Bypasses every <code>rbac()</code> check by design.</p>
+        </div>
+        <div class="role-card">
+          <h4><span class="tag accent">ADMIN</span></h4>
+          <p>Full control within one restaurant — products, workers, reports, settings, finance. Gated by <code>rbac('ADMIN')</code> on admin-only routes.</p>
+        </div>
+        <div class="role-card">
+          <h4><span class="tag good">CASHIER</span></h4>
+          <p>Operational parity with ADMIN on POS-adjacent work (orders, clients, pending payments, cash drawer) — deliberately, so a shift can run without an admin present. Locked out of workers/reports/settings.</p>
+        </div>
+      </div>
+      <p>Every request carries a JWT with <code>{ sub, restaurantId, role }</code>. <code>createCrudService()</code> — the factory almost every service is built on — enforces the <code>restaurantId</code> check on get/update/remove itself, so tenant isolation isn't something each route has to remember to do.</p>
+      <div class="callout">
+        <strong>Same username, different restaurants</strong> is explicitly supported: the Postgres unique constraint is scoped to <code>(restaurant_id, username)</code>, and login disambiguates same-username accounts using a device-fingerprint → <code>restaurantId</code> hint before falling back to password matching.
+      </div>
+    </section>
+
+    <section id="licensing">
+      <h2><span class="n">04</span> Licensing &amp; devices</h2>
+      <p class="section-intro">Every restaurant runs against a license record, checked at login and re-validated on a schedule — including while fully offline.</p>
+      <table style="margin-bottom:16px"><tbody>
+        <tr><td class="mono">expirationDate</td><td>Hard stop — license simply expires.</td></tr>
+        <tr><td class="mono">validationIntervalHours</td><td>How often a device must phone home online before its offline lease goes stale.</td></tr>
+        <tr><td class="mono">offlineDays</td><td>How long a device may keep operating with zero connectivity before it's locked out.</td></tr>
+        <tr><td class="mono">maximumDevices</td><td>Device cap per restaurant, enforced at activation.</td></tr>
+        <tr><td class="mono">sessionTimeoutMinutes</td><td>Idle-session cutoff, swept server-side by a background job.</td></tr>
+      </tbody></table>
+      <p>Offline operation works via an ECDSA-signed "offline license" issued at login/activation and re-verified locally by the Electron/browser client — the server doesn't need to be reachable for the app to keep enforcing its own expiry.</p>
+    </section>
+
+    <section id="pos">
+      <h2><span class="n">05</span> POS &amp; orders</h2>
+      <p class="section-intro">The order is the spine of the app — almost every other module (loyalty, cash drawer, reports, pending payments) is a view or a side effect of orders being created.</p>
+      <p>An order carries its own lifecycle <code>status</code> (<code>pending → preparing → completed</code>, or <code>cancelled</code>) completely independently from payment. That separation is what makes delivery payments possible without corrupting kitchen/order-tracking logic.</p>
+    </section>
+
+    <section id="payments">
+      <h2><span class="n">06</span> Delivery payments</h2>
+      <p class="section-intro">The part of the app with the most deliberate design: an order can be handed to a courier before the cash is collected, and the system has to track that gap correctly across restaurant-scoped, duplicate-name-tolerant delivery agents.</p>
+
+      <h3>Four payment scenarios</h3>
+      <div class="table-wrap"><table><thead><tr><th>Scenario</th><th>Receipt</th><th>paymentStatus</th><th>Ledger</th><th>Shows in Pending Payments?</th></tr></thead><tbody>
+        <tr><td><strong>Paid now</strong></td><td>Printed immediately</td><td><span class="tag good">paid</span></td><td>+1 immediately</td><td>Never</td></tr>
+        <tr><td><strong>Pay at end of day</strong></td><td>Printed immediately</td><td><span class="tag warn">pending</span></td><td>Unchanged</td><td>Yes, until collected</td></tr>
+        <tr><td><strong>Print receipt only</strong></td><td>Printed immediately</td><td><span class="tag warn">pending</span></td><td>Unchanged</td><td>Yes — distinct <code>paymentTiming</code>, same mechanics</td></tr>
+        <tr><td><strong>Cancel</strong></td><td>None</td><td>—</td><td>No entry</td><td>No order at all</td></tr>
+      </tbody></table></div>
+      <p>The single field that drives all of this is <code>paymentTiming</code> (<code>PAID_NOW | END_OF_DAY | UNPAID_PRINTED</code>) — it decides whether <code>paymentStatus</code> is ever non-null, and the Pending Payments query is just <code>rows.filter(o =&gt; !!o.paymentTiming)</code>.</p>
+
+      <h3>Why <code>deliveryAgentId</code>, not the name</h3>
+      <p>Delivery agents are their own restaurant-scoped collection with a stable id; orders store <code>deliveryAgentId</code> and snapshot <code>deliveryAgentName</code> for display only. Every filter, settlement, and total is keyed off the id — verified with a regression test using two agents deliberately both named "Ahmed," where filtering by each one's own id returns only that agent's orders.</p>
+
+      <h3>Filters compose with AND, not OR</h3>
+      <p>Agent, date range, status, and search are sequential <code>.filter()</code> calls on the backend — inherently AND. <code>dateTo</code> is bumped by 23:59:59.999 so a date-only string like <code>"2026-07-24"</code> (which parses as UTC midnight) still includes orders placed that entire day.</p>
+      <div class="callout">
+        <strong>Two UI bugs fixed this cycle, not logic bugs.</strong> The filter row had <code>overflow-x: auto</code> for horizontal scroll — CSS spec forces <code>overflow-y</code> to <code>auto</code> too in that case, which silently clipped the Delivery Agent/Status dropdown popups shut. And the search box fired a request per keystroke with no response-sequencing, so a slow, stale response could overwrite a newer one. Both fixed without touching the filter logic itself, which was already correct.
+      </div>
+    </section>
+
+    <section id="cash">
+      <h2><span class="n">07</span> Cash drawer &amp; ledger</h2>
+      <p class="section-intro">One append-only ledger is the source of truth for cash-on-hand; the drawer total shown in the UI is always read from it, never computed independently on the frontend.</p>
+      <ul>
+        <li><strong>Cash Ledger</strong> — <code>record()</code> appends an entry per cash-moving event (order paid, payment settled, order cancelled/reversed, cash advance); <code>balance()</code>/<code>shiftContribution()</code> read it back.</li>
+        <li><strong>Settlement</strong> ("Collect") is wrapped in a per-order mutex (<code>withLock</code>) so it can't double-fire: <code>paymentStatus → paid</code>, <code>paidAt</code> stamped, exactly one ledger entry, no reprint.</li>
+        <li><strong>Shared frontend state</strong> — a small Zustand store (<code>usePosStats</code>) holds the restaurant-wide drawer total and pending-payments count/total, refreshed once and shared by the POS badge, Dashboard, and Pending Payments summary tiles, so settling on one page updates every other mounted view instantly with no reload.</li>
+      </ul>
+    </section>
+
+    <section id="operations">
+      <h2><span class="n">08</span> Back-of-house modules</h2>
+      <p class="section-intro">Everything downstream of orders/cash follows the same shape: a service built on <code>createCrudService</code>, restaurant-scoped, CRUD routes, a matching page.</p>
+      <div class="grid3">
+        <div class="card"><strong>Inventory &amp; goods</strong><p style="margin:6px 0 0;font-size:13.5px;color:var(--ink-soft)">Stock, restocking, goods-received checks with photo/reason tracking.</p></div>
+        <div class="card"><strong>Workers &amp; scheduling</strong><p style="margin:6px 0 0;font-size:13.5px;color:var(--ink-soft)">Attendance, shifts, salaries, cash advances against pay.</p></div>
+        <div class="card"><strong>Clients &amp; loyalty</strong><p style="margin:6px 0 0;font-size:13.5px;color:var(--ink-soft)">Customer records, location cascades (City → Area), loyalty points engine.</p></div>
+        <div class="card"><strong>Reservations &amp; complaints</strong><p style="margin:6px 0 0;font-size:13.5px;color:var(--ink-soft)">Table booking and customer-complaint tracking.</p></div>
+        <div class="card"><strong>Finance</strong><p style="margin:6px 0 0;font-size:13.5px;color:var(--ink-soft)">Rent, petty cash, expenses, and reporting rolled up per restaurant.</p></div>
+        <div class="card"><strong>Kitchen (KDS)</strong><p style="margin:6px 0 0;font-size:13.5px;color:var(--ink-soft)">Kitchen display tickets generated from live orders.</p></div>
+      </div>
+    </section>
+
+    <section id="superadmin">
+      <h2><span class="n">09</span> Super Admin</h2>
+      <p class="section-intro">A separate login (<code>/superadmin/login</code>), separate table (<code>super_admins</code>), separate dashboard — never reachable from a restaurant's own login.</p>
+      <ul>
+        <li>Create restaurants, issue/adjust licenses (validation interval, offline days, device cap, session timeout).</li>
+        <li>Create/suspend/delete/reset-password on any restaurant's users — deletion is a soft <code>status:'inactive'</code>, never a hard delete, so historical orders/salaries referencing that user stay intact.</li>
+        <li>Critical account changes (delete, suspend, password reset) revoke that user's active sessions, so an old JWT can't keep working after the account underneath it changed.</li>
+      </ul>
+    </section>
+
+    <section id="frontend">
+      <h2><span class="n">10</span> Frontend shape</h2>
+      <p class="section-intro">React Router SPA, one <code>Protected</code> wrapper distinguishing "any logged-in role" routes from <code>admin</code>-only ones, shared UI primitives in one file.</p>
+      <ul>
+        <li><code>components/ui.jsx</code> — the entire design vocabulary: <code>Card</code>, <code>DataTable</code>, <code>Dropdown</code>, <code>DateField</code>, <code>Stat</code>, <code>Badge</code>, used identically across every page rather than each page rolling its own.</li>
+        <li><code>store/</code> — small Zustand stores: <code>auth</code> (session/license), <code>ui</code> (language, notifications, confirm dialogs), <code>posStats</code> (shared drawer/pending totals), <code>connectivity</code> (online/offline).</li>
+        <li>Route-level code splitting via lazy imports, with manual vendor chunks (React, Recharts, i18next) so they're cached once instead of duplicated per route.</li>
+      </ul>
+    </section>
+
+    <section id="i18n">
+      <h2><span class="n">11</span> i18n &amp; offline</h2>
+      <p class="section-intro">English/Arabic side by side, RTL handled at the layout level rather than per-component — direction flips, translations swap, no hardcoded left/right positioning to chase down.</p>
+      <p>Offline mode is a first-class path, not a fallback: <code>PERSISTENCE_MODE=local</code> swaps every <code>repo()</code> call to local JSON files with the same interface, a sync engine reconciles with Supabase (<code>last-write-wins</code>) once connectivity returns, and the offline license (above) keeps enforcing expiry the entire time.</p>
+    </section>
+
+    <section id="testing">
+      <h2><span class="n">12</span> Testing &amp; conventions</h2>
+      <p class="section-intro">Vitest on both sides; the backend suite runs against the same local-JSON path production offline mode uses, so tests exercise the real persistence code, not a mock.</p>
+      <div class="grid2">
+        <div class="card"><div class="tag good">Backend</div><p style="margin-top:8px">Per-service test files beside their source (<code>orderService.test.js</code>, <code>authService.concurrency.test.js</code>, …) plus dedicated concurrency tests for the login/lock-sensitive paths.</p></div>
+        <div class="card"><div class="tag good">Frontend</div><p style="margin-top:8px">Page-level render/smoke tests plus targeted behavior tests (e.g. cash-drawer safety on the Orders page) under <code>pages/__tests__</code>.</p></div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>Restro App — architecture report generated from the current codebase, 2026-07-25.</footer>
+</div>

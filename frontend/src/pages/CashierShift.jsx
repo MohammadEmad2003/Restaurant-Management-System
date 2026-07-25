@@ -30,8 +30,14 @@ export default function CashierShift() {
   const openShift = async () => {
     setBusy(true);
     try {
-      await api.post('/cashier-shifts/open', { openingFloat: Number(openingFloat) || 0 });
-      notify(t('cashierShift.opened', 'Shift opened'));
+      const { data } = await api.post('/cashier-shifts/open', { openingFloat: Number(openingFloat) || 0 });
+      const d = data?.openingDifference || 0;
+      const openMsg = d === 0
+        ? t('cashierShift.opened', 'Shift opened')
+        : d > 0
+          ? `${t('cashierShift.opened', 'Shift opened')} — ${t('cashierShift.over', 'Over by')} ${money(d)}`
+          : `${t('cashierShift.opened', 'Shift opened')} — ${t('cashierShift.short', 'Short by')} ${money(Math.abs(d))}`;
+      notify(openMsg, d === 0 ? 'success' : 'info');
       setOpeningFloat('');
       reload();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
@@ -92,10 +98,10 @@ export default function CashierShift() {
 
       {!shift ? (
         <Card title={<span className="row" style={{ gap: 8 }}><LockOpen size={17} /> {t('cashierShift.openTitle', 'Open a shift')}</span>}
-          sub={t('cashierShift.openSub', 'Enter the cash currently in the drawer (0 if the previous cash was deposited to the owner)')}
+          sub={t('cashierShift.openSub', "Count the cash physically in the drawer — it's compared against the Cash Drawer total, not added to it, so only a real over/short difference is recorded")}
           style={{ maxWidth: 460 }}>
           <div className="field">
-            <label>{t('cashierShift.openingFloat', 'Opening cash (float)')}</label>
+            <label>{t('cashierShift.openingFloat', 'Counted cash in the drawer')}</label>
             <input className="input" type="number" min={0} step="0.01" value={openingFloat}
               onChange={(e) => setOpeningFloat(e.target.value)} placeholder="0.00" />
           </div>
@@ -114,6 +120,12 @@ export default function CashierShift() {
             </div>
             {statRow(t('cashierShift.openedAt', 'Opened at'), datetime(shift.openedAt))}
             {statRow(t('cashierShift.openingFloat', 'Opening cash (float)'), money(shift.openingFloat))}
+            {!!shift.openingDifference && statRow(
+              t('cashierShift.openingDifference', 'Opening difference'),
+              <span style={{ color: shift.openingDifference > 0 ? 'var(--success)' : 'var(--danger)' }}>
+                {shift.openingDifference > 0 ? '+' : '−'}{money(Math.abs(shift.openingDifference))}
+              </span>,
+            )}
             {statRow(t('cashierShift.cashSales', 'Cash sales this shift'), money(shift.cashSales))}
             {statRow(t('cashierShift.expected', 'Expected in the box'), money(expected), true)}
           </Card>

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cashierShiftService } from './cashierShiftService.js';
 import { orderService } from './orderService.js';
+import { cashLedgerService } from './cashLedgerService.js';
 import { repo } from '../repositories/index.js';
 import { createTestRestaurant, createCashier } from '../test-helpers/fixtures.js';
 
@@ -37,6 +38,40 @@ test('Pending Amount: an END_OF_DAY delivery-agent order does not increase the c
   // from order state each time, so it must stay stable.
   const refreshed = await cashierShiftService.current(user);
   assert.equal(refreshed.expectedCash, 1500);
+});
+
+test('opening a shift COMPARES the counted float against the Cash Drawer balance instead of adding it — matching count leaves the balance untouched, a mismatch records only the difference', async () => {
+  const { restaurant, admin } = await createTestRestaurant();
+  const user = { sub: admin.id, restaurantId: restaurant.id };
+
+  // Simulate cash already sitting in the drawer from something unrelated to
+  // any shift (e.g. a prior sale) — the ledger balance is 300 before anyone
+  // opens a shift at all.
+  await cashLedgerService.record({ restaurantId: restaurant.id, amount: 300, transactionType: 'CASH_SALE', createdByUserId: admin.id });
+  assert.equal(await cashLedgerService.balance(restaurant.id), 300);
+
+  // Cashier counts exactly what the ledger already expects — opening must
+  // NOT add another 300 on top of it.
+  const shift1 = await cashierShiftService.open(user, { openingFloat: 300 });
+  assert.equal(shift1.openingDifference, 0);
+  assert.equal(await cashLedgerService.balance(restaurant.id), 300, 'a matching count must leave the Cash Drawer balance unchanged, not double it');
+  // Keep the cash in the till (not deposited to the owner) so the balance
+  // carries forward, the same as a real cashier reopening later.
+  await cashierShiftService.close(shift1.id, user, { countedCash: 300, depositedToOwner: false });
+
+  // Cashier counts MORE than the ledger expects (a real overage) — only the
+  // +50 difference should be recorded, not the full 350.
+  const shift2 = await cashierShiftService.open(user, { openingFloat: 350 });
+  assert.equal(shift2.openingDifference, 50);
+  assert.equal(await cashLedgerService.balance(restaurant.id), 350);
+  await cashierShiftService.close(shift2.id, user, { countedCash: 350, depositedToOwner: false });
+
+  // Cashier counts LESS than the ledger expects (a real shortage) — the
+  // balance should drop by exactly that shortfall, recorded as a negative
+  // adjustment, not silently ignored or added as if it were a positive float.
+  const shift3 = await cashierShiftService.open(user, { openingFloat: 100 });
+  assert.equal(shift3.openingDifference, -250);
+  assert.equal(await cashLedgerService.balance(restaurant.id), 100);
 });
 
 test('Delivery Agent + Paid Now increases the cash drawer immediately (money already received at order creation)', async () => {

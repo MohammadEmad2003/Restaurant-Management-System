@@ -6,6 +6,21 @@ import { logger } from '../utils/logger.js';
 
 const store = secureStore();
 
+/** Coerces + validates a license numeric setting. A plain `value < min` check
+ * silently passes for non-numeric input (`NaN < 1` is `false` in JS), which
+ * previously let e.g. `offlineDays: "abc"` be stored — then crashed every
+ * login for that restaurant with a RangeError the next time an offline
+ * license was generated (`new Date().setDate(x + NaN)` → Invalid Date →
+ * `.toISOString()` throws), and silently disabled the max-devices/max-
+ * concurrent-cashier-sessions caps (`n >= "abc"` is always false). */
+function requireFiniteNumber(value, min, label) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < min) {
+    throw new HttpError(400, `${label} must be a number ${min > 0 ? `of at least ${min}` : 'that is not negative'}`);
+  }
+  return n;
+}
+
 // Note: JWT lifetime is a global setting (config.jwtExpiresInHours), not
 // per-restaurant — it intentionally has no entry here.
 const DEFAULTS = {
@@ -26,6 +41,12 @@ export function licenseExpirationDate(days = DEFAULTS.licenseDays, from = new Da
   d.setDate(d.getDate() + days);
   return d.toISOString();
 }
+
+/** Sentinel "never expires" date — functionally forever without needing a
+ * separate boolean flag threaded through every expiration check in the app;
+ * anything comparing against `new Date()` just never trips. Exported so the
+ * frontend can recognise it and show "Never Expires" instead of a raw date. */
+export const FOREVER_DATE = '9999-12-31T23:59:59.999Z';
 
 export const licenseService = {
   async createLicense(restaurantId, overrides = {}) {
@@ -100,6 +121,18 @@ export const licenseService = {
     return { license: updated, expirationDate };
   },
 
+  /** Sets the license to never expire (see FOREVER_DATE) and makes sure it's
+   * active. Still a real, revocable/suspendable license — only the
+   * expiration check itself is neutralized. */
+  async setLicenseForever(restaurantId) {
+    const license = await this.requireLicense(restaurantId);
+    const updated = await store.update('licenses', license.id, {
+      expirationDate: FOREVER_DATE,
+      status: 'active',
+    });
+    return { license: updated, expirationDate: FOREVER_DATE };
+  },
+
   async extendLicense(restaurantId, days) {
     if (!days || days <= 0) throw new HttpError(400, 'Extension days must be positive');
     const license = await this.requireLicense(restaurantId);
@@ -129,33 +162,33 @@ export const licenseService = {
   },
 
   async changeOfflineDays(restaurantId, days) {
-    if (days < 0) throw new HttpError(400, 'Offline days cannot be negative');
+    const n = requireFiniteNumber(days, 0, 'Offline days');
     const license = await this.requireLicense(restaurantId);
-    return store.update('licenses', license.id, { offlineDays: days });
+    return store.update('licenses', license.id, { offlineDays: n });
   },
 
   async changeMaximumDevices(restaurantId, count) {
-    if (count < 1) throw new HttpError(400, 'Maximum devices must be at least 1');
+    const n = requireFiniteNumber(count, 1, 'Maximum devices');
     const license = await this.requireLicense(restaurantId);
-    return store.update('licenses', license.id, { maximumDevices: count });
+    return store.update('licenses', license.id, { maximumDevices: n });
   },
 
   async changeValidationInterval(restaurantId, hours) {
-    if (hours < 1) throw new HttpError(400, 'Validation interval must be at least 1 hour');
+    const n = requireFiniteNumber(hours, 1, 'Validation interval');
     const license = await this.requireLicense(restaurantId);
-    return store.update('licenses', license.id, { validationIntervalHours: hours });
+    return store.update('licenses', license.id, { validationIntervalHours: n });
   },
 
   async changeMaxConcurrentCashierSessions(restaurantId, count) {
-    if (count < 1) throw new HttpError(400, 'Must allow at least 1 concurrent cashier session');
+    const n = requireFiniteNumber(count, 1, 'Concurrent cashier sessions');
     const license = await this.requireLicense(restaurantId);
-    return store.update('licenses', license.id, { maxConcurrentCashierSessions: count });
+    return store.update('licenses', license.id, { maxConcurrentCashierSessions: n });
   },
 
   async changeSessionTimeoutMinutes(restaurantId, minutes) {
-    if (minutes < 1) throw new HttpError(400, 'Session timeout must be at least 1 minute');
+    const n = requireFiniteNumber(minutes, 1, 'Session timeout');
     const license = await this.requireLicense(restaurantId);
-    return store.update('licenses', license.id, { sessionTimeoutMinutes: minutes });
+    return store.update('licenses', license.id, { sessionTimeoutMinutes: n });
   },
 
   async validateLicense(restaurantId) {

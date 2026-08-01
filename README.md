@@ -67,7 +67,7 @@ The app is now organized around **Restaurants**, each with its own license and u
 
 > On a fresh install, the default Super Admin is created automatically. In production, change the default Super Admin password immediately.
 
-### 3) Desktop app (optional, Electron)
+### 3 ) Desktop app (optional, Electron)
 ```bash
 cd frontend
 npm run electron:dev   # opens the desktop window (dev)

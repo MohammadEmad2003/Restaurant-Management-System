@@ -316,3 +316,28 @@ test('listPendingPayments combines agentId + status + date range + search with A
   assert.equal(matched.length, 1);
   assert.equal(matched[0].id, orderAhmed.id);
 });
+
+test('orderService.list supports an inclusive dateTo (an order placed later the same day is not excluded) and a search term matching orderNumber/clientName', async () => {
+  const { restaurant, admin } = await createTestRestaurant();
+  const product = await repo('products').create({ name: 'History Item', category: 'Main', price: 40, active: true, restaurantId: restaurant.id });
+  const user = { sub: admin.id, restaurantId: restaurant.id };
+  const client = await repo('clients').create({ name: 'Searchable Customer', phoneNumbers: [], restaurantId: restaurant.id });
+
+  const order = await orderService.create({
+    products: [{ productId: product.id, quantity: 1, unitPrice: 40 }], walkIn: true, clientId: client.id,
+  }, user);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = await orderService.list({ dateFrom: today, dateTo: today }, user);
+  assert.ok(rows.some((o) => o.id === order.id), 'an order placed today must be included when dateFrom=dateTo=today (inclusive end-of-day)');
+
+  const byNumber = await orderService.list({ q: order.orderNumber }, user);
+  assert.ok(byNumber.some((o) => o.id === order.id));
+
+  const byName = await orderService.list({ q: 'Searchable Customer' }, user);
+  assert.ok(byName.some((o) => o.id === order.id));
+
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const excluded = await orderService.list({ dateFrom: yesterday, dateTo: yesterday }, user);
+  assert.ok(!excluded.some((o) => o.id === order.id), 'an order placed today must be excluded from a yesterday-only range');
+});

@@ -37,24 +37,34 @@ export default function Inventory() {
   const notify = useUI((s) => s.notify);
   const can = useAuth((s) => s.can);
   const { data, loading, refetch } = useFetch('/goods', []);
-  const { data: val } = useFetch('/goods/valuation', []);
+  const { data: val, refetch: refetchVal } = useFetch('/goods/valuation', []);
   const [purchase, setPurchase] = useState(null);
   const [pForm, setPForm] = useState({ quantity: '', unitPrice: '', supplierId: '' });
   const blankItem = { name: '', category: '', unit: 'kg', quantityAvailable: '', minimumStockLevel: '', purchasePrice: '' };
   const [addOpen, setAddOpen] = useState(false);
   const [iForm, setIForm] = useState(blankItem);
+  const [saving, setSaving] = useState(false);
 
   const doPurchase = async () => {
+    if (saving) return;
+    setSaving(true);
     try {
       await api.post(`/goods/${purchase.id}/purchase`, { quantity: Number(pForm.quantity), unitPrice: Number(pForm.unitPrice), supplierId: pForm.supplierId });
       notify(t('inventory.stockAdded', 'Stock added & expense recorded'));
       setPurchase(null); setPForm({ quantity: '', unitPrice: '', supplierId: '' });
       refetch();
+      // A purchase changes both stock quantity AND purchasePrice, both of
+      // which feed the "Inventory Value" stat — refresh it too, otherwise it
+      // silently goes stale until the whole page is reloaded.
+      refetchVal();
     } catch (e) { notify(e.response?.data?.error || t('common.failed', 'Failed'), 'error'); }
+    finally { setSaving(false); }
   };
 
   const addItem = async () => {
     if (!iForm.name || !iForm.unit) { notify(t('inventory.fillRequired', 'Name and unit are required'), 'error'); return; }
+    if (saving) return;
+    setSaving(true);
     try {
       await api.post('/goods', {
         name: iForm.name,
@@ -67,7 +77,9 @@ export default function Inventory() {
       notify(t('inventory.itemAdded', 'Item added'));
       setAddOpen(false); setIForm(blankItem);
       refetch();
+      refetchVal();
     } catch (e) { notify(e.response?.data?.error || t('common.failed', 'Failed'), 'error'); }
+    finally { setSaving(false); }
   };
 
   const { page, pageSize, totalPages, totalItems, setPage, setPageSize, paginatedData: paginatedGoods } = usePaginated(data ?? [], 10);
@@ -103,7 +115,7 @@ export default function Inventory() {
       </Card>
 
       <Modal open={!!purchase} onClose={() => setPurchase(null)} title={`${t('inventory.restock', 'Restock')} — ${shortName(purchase?.name || '', lang)}`}
-        footer={<><button className="btn" onClick={() => setPurchase(null)}>{t('common.cancel')}</button><button className="btn btn--primary" onClick={doPurchase}><Plus size={15} /> {t('inventory.addStock', 'Add Stock')}</button></>}>
+        footer={<><button className="btn" onClick={() => setPurchase(null)}>{t('common.cancel')}</button><button className="btn btn--primary" disabled={saving} onClick={doPurchase}><Plus size={15} /> {t('inventory.addStock', 'Add Stock')}</button></>}>
         <div className="field">
           <label>{t('inventory.quantityLabel', 'Quantity')}</label>
           <div className="row" style={{ alignItems: 'center', gap: 6 }}>
@@ -116,7 +128,7 @@ export default function Inventory() {
       </Modal>
 
       <Modal open={addOpen} onClose={() => setAddOpen(false)} title={t('inventory.newItem', 'New Inventory Item')}
-        footer={<><button className="btn" onClick={() => setAddOpen(false)}>{t('common.cancel')}</button><button className="btn btn--primary" onClick={addItem}><Plus size={15} /> {t('common.save')}</button></>}>
+        footer={<><button className="btn" onClick={() => setAddOpen(false)}>{t('common.cancel')}</button><button className="btn btn--primary" disabled={saving} onClick={addItem}><Plus size={15} /> {t('common.save')}</button></>}>
         <div className="row" style={{ gap: 12 }}>
           <div className="field" style={{ flex: 2 }}><label>{t('common.name')}</label><input className="input" value={iForm.name} onChange={(e) => setIForm({ ...iForm, name: e.target.value })} placeholder={t('inventory.namePlaceholder', 'Mozzarella Cheese')} /></div>
           <div className="field" style={{ flex: 1 }}><label>{t('inventory.category', 'Category')}</label><CategorySelect value={iForm.category} onChange={(v) => setIForm({ ...iForm, category: v })} options={data.map((g) => g.category)} /></div>

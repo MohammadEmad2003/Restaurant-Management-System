@@ -11,8 +11,15 @@ import { sessionService } from './sessionService.js';
 import { buildFingerprint, classifyDeviceType } from '../utils/device.js';
 import { withLock } from '../utils/lock.js';
 import { signOfflinePayload } from '../utils/offlineLicenseCrypto.js';
+import { connectivity } from '../sync/connectivity.js';
+import { isSupabaseConfigured } from '../config/index.js';
 
 const store = secureStore();
+
+// A calendar month has no single fixed length (28-31 days) — a plain 30-day
+// window is used instead, so "at least once a month" is enforced consistently
+// regardless of which month a device's last online validation fell in.
+const MONTHLY_VALIDATION_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function signAuthToken(payload) {
   return jwt.sign(payload, config.jwtSecret, { expiresIn: `${config.jwtExpiresInHours || 24}h` });
@@ -62,7 +69,7 @@ export const authService = {
     if (['inactive', 'suspended'].includes(user.status)) throw new HttpError(403, 'Account disabled');
 
     const restaurant = await store.findOne('restaurants', { id: user.restaurantId });
-    if (!restaurant || restaurant.status === 'suspended') {
+    if (!restaurant || restaurant.status === 'suspended' || restaurant.status === 'deleted') {
       throw new HttpError(403, 'Your restaurant subscription has expired. Please contact your administrator.');
     }
 
@@ -130,15 +137,21 @@ export const authService = {
         await sessionService.expireAllForUser(user.id);
       }
 
+      // Only a genuinely online contact counts toward the monthly
+      // online-validation requirement — a login that only succeeded against
+      // locally-cached data (because this device is actually offline right
+      // now) must not silently renew it (see deviceService.updateValidationTimestamp).
+      const online = connectivity.isOnline;
       const registeredDevice = await deviceService.registerDevice({
         restaurantId: user.restaurantId,
         userId: user.id,
         fingerprint,
         deviceName: normalizedDeviceName,
         operatingSystem: normalizedOS,
+        online,
       });
 
-      await deviceService.updateValidationTimestamp(registeredDevice.id);
+      const validatedDevice = await deviceService.updateValidationTimestamp(registeredDevice.id, { online });
 
       const newJwtId = randomUUID();
       const tokenPayload = {
@@ -162,7 +175,7 @@ export const authService = {
         deviceId: registeredDevice.id,
       });
 
-      return { device: registeredDevice, token: newToken, jwtId: newJwtId };
+      return { device: validatedDevice || registeredDevice, token: newToken, jwtId: newJwtId };
     });
 
     const offlineLicense = this.generateOfflineLicense({
@@ -173,6 +186,7 @@ export const authService = {
       expirationDate: license.expirationDate,
       offlineDays: license.offlineDays,
       validationIntervalHours: license.validationIntervalHours,
+      monthlyValidationDeadline: this.computeMonthlyValidationDeadline(device.lastOnlineValidationAt),
     });
 
     return {
@@ -224,6 +238,19 @@ export const authService = {
     }
     if (!user) throw new HttpError(401, 'Invalid credentials');
     if (normalizeRole(user.role) !== 'ADMIN') throw new HttpError(403, 'Only restaurant admins can activate licenses');
+
+    // First-time activation must happen with a genuine, live connection to
+    // Supabase — this is the one moment the app insists on being online;
+    // every other operation afterward (including running fully offline
+    // indefinitely) is unaffected. A stale cached `connectivity.online` flag
+    // is not good enough here, so this always re-probes right now rather
+    // than trusting whatever the background sync loop last observed.
+    if (isSupabaseConfigured()) {
+      const online = await connectivity.check();
+      if (!online) {
+        throw new HttpError(503, 'An internet connection is required to activate for the first time. Please connect to the internet and try again.');
+      }
+    }
 
     const license = await licenseService.activateLicense(user.restaurantId, token);
     return this.loginRestaurantUser({
@@ -290,7 +317,25 @@ export const authService = {
    * requires reconnecting to get a fresh online validation rather than
    * silently continuing to trust a stale one.
    */
-  generateOfflineLicense({ restaurantId, licenseId, deviceId, fingerprint, expirationDate, offlineDays, validationIntervalHours }) {
+  /**
+   * The monthly deadline is always derived from the DEVICE's own
+   * `lastOnlineValidationAt` — the timestamp of its last genuinely-online
+   * contact with the licensing backend (see
+   * deviceService.updateValidationTimestamp) — never from "now". Deriving it
+   * from "now" on every call would let a device stuck fully offline keep
+   * renewing its own deadline forever through purely local logins, since
+   * login/heartbeat both still nominally "succeed" offline against
+   * locally-cached data (by design, for continuity). Anchoring to the last
+   * CONFIRMED-online timestamp instead means the deadline stops moving the
+   * moment true connectivity is lost, and only a real reconnect can push it
+   * forward again.
+   */
+  computeMonthlyValidationDeadline(lastOnlineValidationAt) {
+    const base = lastOnlineValidationAt ? new Date(lastOnlineValidationAt).getTime() : Date.now();
+    return new Date(base + MONTHLY_VALIDATION_MS).toISOString();
+  },
+
+  generateOfflineLicense({ restaurantId, licenseId, deviceId, fingerprint, expirationDate, offlineDays, validationIntervalHours, monthlyValidationDeadline }) {
     const validatedAt = new Date();
     const offlineUntil = new Date(validatedAt);
     offlineUntil.setDate(offlineUntil.getDate() + offlineDays);
@@ -303,6 +348,13 @@ export const authService = {
       validatedAt: validatedAt.toISOString(),
       validationIntervalHours: validationIntervalHours ?? 24,
       offlineExpiration: offlineUntil.toISOString(),
+      // Hard, non-configurable backstop: both Admin and Cashier must complete
+      // a successful ONLINE validation (a fresh login, or any heartbeat while
+      // actually online — both call this same function) at least once every
+      // calendar month, independent of whatever offlineDays a restaurant's
+      // license is configured with — this can only ever be tightened by that
+      // setting, never loosened past 30 days.
+      monthlyValidationDeadline: monthlyValidationDeadline || this.computeMonthlyValidationDeadline(null),
     };
     // Sent alongside the object so the client verifies the signature against
     // this EXACT string, never re-serializing the object itself (which could

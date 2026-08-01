@@ -1,12 +1,13 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Search, Phone, MapPin, Star, History, Filter, X, Pencil, Trash2 } from 'lucide-react';
-import { api } from '../api/client.js';
+import { Plus, Search, Phone, MapPin, Star, History, Filter, X, Pencil, Trash2, Printer, Award } from 'lucide-react';
+import { api, openReport } from '../api/client.js';
 import { useFetch } from '../hooks/useApi.js';
 import { usePaginated } from '../hooks/usePaginated.js';
 import { useUI } from '../store/ui.js';
+import { useAuth } from '../store/auth.js';
 import { Card, PageHeader, Spinner, Badge, Modal, Avatar, DataTable, LocationSelect, Dropdown, Phone as PhoneField } from '../components/ui.jsx';
-import { money, shortName, date } from '../utils/format.js';
+import { money, shortName, date, datetime } from '../utils/format.js';
 
 const emptyForm = { name: '', phone: '', address: '', city: '', area: '', notes: '' };
 
@@ -15,6 +16,8 @@ export default function Clients() {
   const lang = useUI((s) => s.lang);
   const notify = useUI((s) => s.notify);
   const confirm = useUI((s) => s.confirm);
+  const can = useAuth((s) => s.can);
+  const isAdmin = can('admin');
   const { data: locTree } = useFetch('/locations/tree', []);
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
@@ -109,6 +112,11 @@ export default function Clients() {
     setHistory(data);
   };
 
+  const printInvoice = (order) => {
+    const ar = lang === 'ar';
+    openReport(`/orders/${order.id}/invoice.pdf${ar ? '?lang=ar' : ''}`);
+  };
+
   if (loading) return <Spinner />;
 
   return (
@@ -174,7 +182,7 @@ export default function Clients() {
             { key: 'actions', label: t('common.actions'), render: (_, r) => (
               <div className="row" style={{ gap: 6 }} onClick={(e) => e.stopPropagation()}>
                 <button className="btn btn--icon btn--sm" title={t('common.edit')} onClick={() => openEdit(r)}><Pencil size={13} /></button>
-                <button className="btn btn--icon btn--sm btn--danger" title={t('common.delete')} onClick={() => removeClient(r)}><Trash2 size={13} /></button>
+                {isAdmin && <button className="btn btn--icon btn--sm btn--danger" title={t('common.delete')} onClick={() => removeClient(r)}><Trash2 size={13} /></button>}
               </div>) },
           ]}
           rows={paginatedClients}
@@ -205,9 +213,23 @@ export default function Clients() {
         {detail && (
           <>
             <div className="grid grid--3" style={{ marginBottom: 16 }}>
-              <div className="card" style={{ padding: 14 }}><div className="muted" style={{ fontSize: 12 }}>{t('clients.totalSpent')}</div><div style={{ fontWeight: 800, fontSize: 18 }}>{money(detail.totalSpent)}</div></div>
-              <div className="card" style={{ padding: 14 }}><div className="muted" style={{ fontSize: 12 }}>{t('clients.visits', 'Visits')}</div><div style={{ fontWeight: 800, fontSize: 18 }}>{detail.visitCount}</div></div>
+              <div className="card" style={{ padding: 14 }}><div className="muted" style={{ fontSize: 12 }}>{t('clients.totalSpent')}</div><div style={{ fontWeight: 800, fontSize: 18 }}>{money(history ? history.totalSpent : detail.totalSpent)}</div></div>
+              <div className="card" style={{ padding: 14 }}><div className="muted" style={{ fontSize: 12 }}>{t('clients.visits', 'Visits')}</div><div style={{ fontWeight: 800, fontSize: 18 }}>{history ? history.orderCount : detail.visitCount}</div></div>
               <div className="card" style={{ padding: 14 }}><div className="muted" style={{ fontSize: 12 }}>{t('clients.loyaltyPoints')}</div><div style={{ fontWeight: 800, fontSize: 18, color: 'var(--brand-700)' }}>{detail.loyaltyPoints}</div></div>
+              <div className="card" style={{ padding: 14 }}><div className="muted" style={{ fontSize: 12 }}>{t('clients.lastOrder', 'Last Order')}</div><div style={{ fontWeight: 800, fontSize: 18 }}>{history?.lastOrderDate ? datetime(history.lastOrderDate) : '—'}</div></div>
+              <div className="card" style={{ padding: 14 }}>
+                <div className="muted" style={{ fontSize: 12 }}>{t('clients.pendingPayments', 'Pending Payments')}</div>
+                <div style={{ fontWeight: 800, fontSize: 18, color: history?.pendingPayments?.count ? 'var(--danger)' : 'inherit' }}>
+                  {history?.pendingPayments?.count ? `${history.pendingPayments.count} · ${money(history.pendingPayments.total)}` : '—'}
+                </div>
+              </div>
+              <div className="card" style={{ padding: 14 }}><div className="muted" style={{ fontSize: 12 }}>{t('nav.complaints', 'Complaints')}</div><div style={{ fontWeight: 800, fontSize: 18 }}>{history?.complaints?.length || 0}</div></div>
+              <div className="card" style={{ padding: 14 }}>
+                <div className="muted" style={{ fontSize: 12 }}><Award size={12} style={{ verticalAlign: 'middle' }} /> {t('clients.mostOrdered', 'Most Ordered')}</div>
+                <div style={{ fontWeight: 800, fontSize: 15 }}>
+                  {history?.topProduct ? `${shortName(history.topProduct.name, lang)} × ${history.topProduct.quantity}` : '—'}
+                </div>
+              </div>
             </div>
             <div className="row wrap" style={{ gap: 8, marginBottom: 8 }}>
               {(detail.phoneNumbers || []).map((p) => <Badge key={p}><Phone size={12} /> <span className="ltr">{p}</span></Badge>)}
@@ -224,10 +246,29 @@ export default function Clients() {
                   { key: 'products', label: t('common.items', 'Items'), render: (v) => `${v.length}` },
                   { key: 'status', label: t('common.status'), render: (v) => t(`status.${v}`, v) },
                   { key: 'totalPrice', label: t('common.total'), align: 'end', render: (v) => money(v) },
+                  {
+                    key: '_act', label: t('common.actions'), render: (_, r) => (
+                      <button className="btn btn--icon btn--sm" title={t('pendingPayments.printInvoice', 'Print Invoice')} onClick={() => printInvoice(r)}><Printer size={13} /></button>
+                    ),
+                  },
                 ]}
                 rows={history.orders}
                 empty={t('clients.noOrdersYet')}
               />
+            )}
+            {history?.complaints?.length > 0 && (
+              <>
+                <div className="card__title row" style={{ gap: 8, marginBottom: 8, marginTop: 20 }}>{t('nav.complaints', 'Complaints')}</div>
+                <DataTable
+                  columns={[
+                    { key: 'date', label: t('common.date') },
+                    { key: 'orderNumber', label: t('complaints.order', 'Order'), render: (v) => v ? <span className="ltr">{v}</span> : '—' },
+                    { key: 'description', label: t('complaints.description') },
+                    { key: 'status', label: t('complaints.status') },
+                  ]}
+                  rows={history.complaints}
+                />
+              </>
             )}
           </>
         )}

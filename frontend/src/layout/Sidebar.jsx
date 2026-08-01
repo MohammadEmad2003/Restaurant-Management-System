@@ -14,6 +14,7 @@ const SECTIONS = [
     items: [
       { to: '/', icon: LayoutDashboard, label: 'dashboard', end: true },
       { to: '/orders', icon: ShoppingCart, label: 'orders' },
+      { to: '/order-history', icon: FileBarChart, label: 'orderHistory' },
       { to: '/cashier-shift', icon: Banknote, label: 'cashierShift' },
       { to: '/kitchen', icon: ChefHat, label: 'kitchen' },
     ],

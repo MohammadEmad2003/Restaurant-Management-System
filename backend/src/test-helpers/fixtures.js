@@ -1,5 +1,6 @@
 import { initSecureStore, secureStore } from '../repositories/secureStore.js';
 import { superAdminService } from '../services/superAdminService.js';
+import { repo } from '../repositories/index.js';
 
 /** Creates a fresh restaurant + admin + license for a test, returning the
  * activation token so the caller can activate it if needed. */
@@ -24,8 +25,20 @@ export async function createCashier(restaurantId, overrides = {}) {
   });
 }
 
+export async function createWorker(restaurantId, overrides = {}) {
+  const suffix = Math.random().toString(36).slice(2, 8);
+  return repo('workers').create({
+    restaurantId,
+    name: overrides.name || `Worker ${suffix}`,
+    username: overrides.username || `worker_${suffix}`,
+    role: overrides.role || 'cashier',
+    status: 'active',
+    salary: overrides.salary ?? 100000,
+  });
+}
+
 export function store() {
   return secureStore();
 }
 
-export default { createTestRestaurant, createCashier, store };
+export default { createTestRestaurant, createCashier, createWorker, store };

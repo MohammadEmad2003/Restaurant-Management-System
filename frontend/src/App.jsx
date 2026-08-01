@@ -11,6 +11,7 @@ import LicenseActivation from './pages/LicenseActivation.jsx';
 
 const Dashboard = lazy(() => import('./pages/Dashboard.jsx'));
 const Orders = lazy(() => import('./pages/Orders.jsx'));
+const OrderHistory = lazy(() => import('./pages/OrderHistory.jsx'));
 const CashierShift = lazy(() => import('./pages/CashierShift.jsx'));
 const Kitchen = lazy(() => import('./pages/Kitchen.jsx'));
 const Products = lazy(() => import('./pages/Products.jsx'));
@@ -86,6 +87,7 @@ export default function App() {
           <Route element={<Protected><ActivationGuard><AppShell /></ActivationGuard></Protected>}>
             <Route index element={<RootRoute />} />
             <Route path="orders" element={<Orders />} />
+            <Route path="order-history" element={<OrderHistory />} />
             <Route path="cashier-shift" element={<CashierShift />} />
             <Route path="kitchen" element={<Kitchen />} />
             <Route path="products" element={<Protected admin><Products /></Protected>} />

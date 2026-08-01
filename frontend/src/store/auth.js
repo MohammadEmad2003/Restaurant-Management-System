@@ -20,14 +20,20 @@ export const useAuth = create((set, get) => ({
   offlineLicense: storedOfflineLicense,
   offlineStatus: null, // { tier: 'ok'|'stale'|'expired'|'blocked', reason }
 
-  /** Called when connectivity flips offline — decides whether the current
-   * session stays usable, must block for reconnection, or must log out,
-   * per the rolling-validation window encoded in the offline license. */
+  /** Re-evaluates the rolling-validation window against the signed offline
+   * license — called when connectivity drops, once per app session on
+   * mount, and once a day thereafter regardless of connectivity state (see
+   * AppShell), so a device that simply stays offline for a long stretch
+   * without ever toggling still gets checked. Does NOT log out on 'expired'
+   * — AppShell blocks the whole app for 'stale'/'blocked'/'expired' via
+   * OfflineBlock instead, and only actually logs out once the device is
+   * genuinely back online, forcing a real reactivation (a fresh login while
+   * connected) rather than a silent local-only re-login that never actually
+   * required reconnecting. */
   async checkOfflineAccess() {
     if (!get().token) return;
-    const status = await evaluateOfflineAccess(get().offlineLicense);
+    const status = await evaluateOfflineAccess(get().offlineLicense, getFingerprint());
     set({ offlineStatus: status });
-    if (status.tier === 'expired') get().logout();
   },
 
   async login(username, password) {

@@ -59,13 +59,19 @@ async function resolveShift(workerId, ts, user) {
 }
 
 export const attendanceService = {
-  /** Resolve the worker id linked to an authenticated user for clock-in/out. */
+  /** Resolve the worker id linked to an authenticated user for clock-in/out.
+   * Checks both link directions: `legacyWorkerId` on the user (older data,
+   * from when a Worker's own creation used to mirror a login account) and
+   * `appUserId` on the worker (current architecture — a Super-Admin-created
+   * Cashier's linked employee record points back at the real account). */
   async resolveWorkerId(userId) {
     const user = await store.findOne('users', { id: userId });
     if (!user) throw new HttpError(404, 'User not found');
-    if (!user.legacyWorkerId) throw new HttpError(400, 'No worker record linked to this user');
-    const worker = await repo('workers').getById(user.legacyWorkerId);
-    if (!worker) throw new HttpError(404, 'Worker not found');
+    let worker = user.legacyWorkerId ? await repo('workers').getById(user.legacyWorkerId) : null;
+    if (!worker) {
+      worker = (await repo('workers').getAll({ restaurantId: user.restaurantId })).find((w) => w.appUserId === userId);
+    }
+    if (!worker) throw new HttpError(400, 'No worker record linked to this user');
     return worker.id;
   },
 

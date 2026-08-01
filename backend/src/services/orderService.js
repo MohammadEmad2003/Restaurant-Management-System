@@ -1,6 +1,5 @@
 import { repo } from '../repositories/index.js';
 import { HttpError } from '../middleware/errorHandler.js';
-import { shortCode } from '../utils/ids.js';
 import { config } from '../config/index.js';
 import { settingsService } from './settingsService.js';
 import { evaluateLoyaltyReward } from './loyaltyEngine.js';
@@ -8,6 +7,7 @@ import { withLock } from '../utils/lock.js';
 import { secureStore } from '../repositories/secureStore.js';
 import { cashLedgerService } from './cashLedgerService.js';
 import { cashierShiftService } from './cashierShiftService.js';
+import { businessDayService } from './businessDayService.js';
 
 const store = secureStore();
 const today = () => new Date().toISOString().slice(0, 10);
@@ -18,19 +18,36 @@ const today = () => new Date().toISOString().slice(0, 10);
 async function resolveCashierName(user) {
   if (!user?.sub) return null;
   const record = await store.findOne('users', { id: user.sub });
-  return record?.username || null;
+  // Prefer the actual display name (mirrored from the worker record) —
+  // falling back straight to username showed e.g. "cash1" instead of
+  // "Cashier One" on every order/receipt/pending-payment.
+  return record?.name || record?.username || null;
 }
 
 async function priceLines(lines, user) {
+  // An empty product list is a legitimate order (e.g. a delivery-only charge
+  // with no line items tracked) — only validate the lines that do exist.
+  if (!Array.isArray(lines)) throw new HttpError(400, 'products must be an array');
   const products = await repo('products').getAll({ restaurantId: user?.restaurantId });
   const byId = Object.fromEntries(products.map((p) => [p.id, p]));
   let total = 0;
   const priced = lines.map((l) => {
     const product = byId[l.productId];
     if (!product) throw new HttpError(400, `Unknown product ${l.productId}`);
-    const unitPrice = l.unitPrice ?? product.price;
-    total += unitPrice * l.quantity;
-    return { productId: l.productId, name: product.name, quantity: l.quantity, unitPrice };
+    const quantity = Number(l.quantity);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      throw new HttpError(400, `Invalid quantity for ${product.name}`);
+    }
+    // The unit price always comes from the product's own current price —
+    // never trusted from the client — so a crafted request can't set an
+    // arbitrary or negative price/quantity that would then flow straight
+    // into the Cash Ledger, the customer's totalSpent, and inventory
+    // deduction (a negative quantity would ADD stock back instead of
+    // deducting it). No real flow in this app ever needs a per-order custom
+    // price — the POS always adds items at the product's current price.
+    const unitPrice = product.price;
+    total += unitPrice * quantity;
+    return { productId: l.productId, name: product.name, quantity, unitPrice };
   });
   return { priced, total: +total.toFixed(2) };
 }
@@ -51,17 +68,52 @@ async function deductInventory(lines, user) {
   }
   const lowStock = [];
   for (const [goodId, qty] of Object.entries(need)) {
-    const good = goods.find((g) => g.id === goodId);
-    if (!good) continue;
-    const newQty = +(good.quantityAvailable - qty).toFixed(3);
-    await repo('goods').update(goodId, { quantityAvailable: newQty });
-    if (newQty <= good.minimumStockLevel) lowStock.push({ goodId, name: good.name, remaining: newQty });
+    if (!goods.some((g) => g.id === goodId)) continue;
+    // Locked, and the current quantity re-read INSIDE the lock rather than
+    // trusting the `goods` snapshot fetched above — two orders deducting the
+    // same ingredient at nearly the same instant (a normal lunch-rush
+    // scenario with multiple POS terminals) would otherwise both read the
+    // same stale `quantityAvailable` and the second write would silently
+    // clobber the first ("lost update"), overselling stock with no error.
+    // Floored at 0 so a recipe/order asking for more than is physically in
+    // stock can never leave the record silently negative.
+    const updated = await withLock(`inventory-${goodId}`, async () => {
+      const fresh = await repo('goods').getById(goodId);
+      if (!fresh) return null;
+      const newQty = Math.max(0, +(fresh.quantityAvailable - qty).toFixed(3));
+      return repo('goods').update(goodId, { quantityAvailable: newQty });
+    });
+    if (updated && updated.quantityAvailable <= updated.minimumStockLevel) {
+      lowStock.push({ goodId, name: updated.name, remaining: updated.quantityAvailable });
+    }
   }
   return lowStock;
 }
 
 export const orderService = {
-  list: (filter, user) => repo('orders').getAll({ ...filter, restaurantId: user?.restaurantId }),
+  /** Every order the caller's restaurant has ever placed, optionally narrowed
+   * by an inclusive from/to date range (matched against `orderDate`) and/or a
+   * free-text search across order number, invoice number, and customer name —
+   * this is what backs full order history browsing (not just the last few
+   * orders), available to Cashier and Admin alike; there is no time-based or
+   * shift-based restriction on which orders a Cashier can see. */
+  async list({ dateFrom, dateTo, q, ...rest } = {}, user) {
+    let rows = await repo('orders').getAll({ ...rest, restaurantId: user?.restaurantId });
+    if (dateFrom) rows = rows.filter((o) => (o.orderDate || 0) >= new Date(dateFrom).getTime());
+    // `dateTo` is a date-only "YYYY-MM-DD" string — without the +86399999ms
+    // end-of-day offset, an order placed later that same day would be
+    // wrongly excluded (the classic UTC-midnight range bug).
+    if (dateTo) rows = rows.filter((o) => (o.orderDate || 0) <= new Date(dateTo).getTime() + 86399999);
+    if (q) {
+      const term = q.toLowerCase();
+      rows = rows.filter((o) =>
+        (o.orderNumber || '').toLowerCase().includes(term) ||
+        (o.invoiceNo || '').toLowerCase().includes(term) ||
+        (o.id || '').toLowerCase().includes(term) ||
+        (o.clientName || '').toLowerCase().includes(term));
+    }
+    return rows.sort((a, b) => (b.orderDate || 0) - (a.orderDate || 0));
+  },
 
   async get(id, user) {
     const o = await repo('orders').getById(id);
@@ -136,6 +188,19 @@ export const orderService = {
       : 'paid';
     const grandTotal = +(total + deliveryFee).toFixed(2);
 
+    // Sequential, human-readable, business-day-scoped order number — "T-001",
+    // "T-002"… for takeaway/walk-in orders, "D-001", "D-002"… for any
+    // delivery-collection order (registered agent or manual/free-text
+    // courier), two completely independent sequences that both reset when
+    // the first cashier shift of a new business day opens (see
+    // businessDayService). `invoiceNo` is kept as the same value — it is not
+    // a separate identifier, just the existing field name every receipt/
+    // pending-payment/report already reads — so this sequential number shows
+    // up everywhere the old random code used to, with no other call site
+    // needing to change. The database primary key (`id`, e.g. "ORD-9f3a2b")
+    // is untouched and remains the stable, non-human-facing identifier.
+    const orderNumber = await businessDayService.nextOrderNumber(user?.restaurantId, isDeliveryCollection);
+
     const order = await repo('orders').create({
       ...data,
       clientName,
@@ -153,7 +218,8 @@ export const orderService = {
       isDelivery,
       deliveryFee,
       subtotal: total,
-      invoiceNo: shortCode('INV'),
+      orderNumber,
+      invoiceNo: orderNumber,
       products: priced,
       totalPrice: grandTotal,
       cashierId: data.cashierId || user?.sub,
@@ -289,6 +355,10 @@ export const orderService = {
     // isDeliveryCollection gate, which is the only thing that ever sets
     // paymentTiming in the first place.
     rows = rows.filter((o) => !!o.paymentTiming);
+    // A cancelled order was never actually collected and never will be — it
+    // must never appear as something still owed, regardless of whatever its
+    // paymentStatus/paymentTiming happen to still say.
+    rows = rows.filter((o) => o.status !== 'cancelled');
     if (status !== 'all') rows = rows.filter((o) => (o.paymentStatus || 'paid') === status);
     if (agentId) rows = rows.filter((o) => o.deliveryAgentId === agentId);
     if (dateFrom) rows = rows.filter((o) => (o.orderDate || 0) >= new Date(dateFrom).getTime());
@@ -320,6 +390,9 @@ export const orderService = {
       if (!before) throw new HttpError(404, 'order not found');
       if (user?.restaurantId && before.restaurantId && before.restaurantId !== user.restaurantId) {
         throw new HttpError(404, 'order not found');
+      }
+      if (before.status === 'cancelled') {
+        throw new HttpError(409, 'This order was cancelled and cannot be settled');
       }
       if ((before.paymentStatus || 'paid') !== 'pending') {
         throw new HttpError(409, 'This order has already been settled');

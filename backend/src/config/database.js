@@ -99,10 +99,22 @@ function ensureSchema(pool) {
         updated_at timestamptz not null default now()
       );
 
-      -- Multiple users may intentionally share the same (restaurant_id, username)
-      -- pair, disambiguated at login by which device is bound to which user —
-      -- drop the legacy uniqueness constraint from installs created before this.
+      -- Historically multiple users could share the same (restaurant_id,
+      -- username) pair, disambiguated at login by device binding — that
+      -- constraint is dropped for any install created before this. Username
+      -- is now required to be unique ACROSS every restaurant (the app-level
+      -- check in superAdminService is the real guard; this index only closes
+      -- the race-condition window once any existing duplicates are cleaned
+      -- up, wrapped so pre-existing duplicates don't fail schema bootstrap).
       alter table users drop constraint if exists users_restaurant_id_username_key;
+
+      do $$
+      begin
+        create unique index if not exists uq_users_username_ci
+          on users (lower(trim(username)));
+      exception when others then
+        raise notice 'Skipping uq_users_username_ci (existing duplicate usernames?): %', sqlerrm;
+      end $$;
 
       create table if not exists super_admins (
         id uuid primary key default gen_random_uuid(),

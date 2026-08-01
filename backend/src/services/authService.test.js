@@ -87,45 +87,50 @@ test('ADMIN is never blocked by device type', async () => {
   assert.ok(result.token);
 });
 
-test('two users sharing the same username (and password) in the same restaurant can both be created, and once a device has logged in as one of them it keeps resolving back to that SAME user on every re-login (Part 9 regression)', async () => {
+test('a username must now be globally unique — two users can no longer share one, even within the same restaurant (supersedes the old Part 9 device-disambiguation design)', async () => {
   const { restaurant, admin, activationToken } = await createTestRestaurant({ licenseOverrides: { maximumDevices: 10 } });
-  // CASHIER logins require an active license — activate it via the admin first.
   await authService.activateRestaurantLicense({
     username: admin.username, password: 'admin12345', token: activationToken, fingerprint: 'fp-admin-shared-setup', userAgent: DESKTOP_UA,
   });
 
-  // Two intentionally identical usernames (and even identical passwords) in
-  // one restaurant — this used to be rejected with a 409 (users.restaurantId+
-  // username uniqueness); it must now be allowed.
-  const userA = await superAdminService.createRestaurantUser(restaurant.id, { username: 'shared', password: 'shared12345', role: 'CASHIER' });
-  const userB = await superAdminService.createRestaurantUser(restaurant.id, { username: 'shared', password: 'shared12345', role: 'CASHIER' });
-  assert.notEqual(userA.id, userB.id);
-
-  // A brand-new device with two identical-credential candidates has no signal
-  // to prefer one over the other — it deterministically gets the first match
-  // (documented, accepted ambiguity: see Part 9 plan). What matters is that
-  // this same device, once bound, always resolves back to the SAME user
-  // afterwards instead of randomly drifting to the other identical account.
-  const firstLogin = await authService.loginRestaurantUser({ username: 'shared', password: 'shared12345', fingerprint: 'fp-device-a', userAgent: DESKTOP_UA });
-  assert.ok(firstLogin.token);
-  assert.ok([userA.id, userB.id].includes(firstLogin.user.id));
-
-  const relogin = await authService.loginRestaurantUser({ username: 'shared', password: 'shared12345', fingerprint: 'fp-device-a', userAgent: DESKTOP_UA });
-  assert.equal(relogin.user.id, firstLogin.user.id, 'the same device must keep resolving to the same one of the two identical-username accounts');
-
-  // A genuinely different device (e.g. the other physical cashier terminal)
-  // logging in fresh is also unambiguous only once it, too, has been bound —
-  // exercised here to confirm the second account remains independently usable.
-  const secondDeviceLogin = await authService.loginRestaurantUser({ username: 'shared', password: 'shared12345', fingerprint: 'fp-device-b', userAgent: DESKTOP_UA });
-  assert.ok(secondDeviceLogin.token);
-  const secondDeviceRelogin = await authService.loginRestaurantUser({ username: 'shared', password: 'shared12345', fingerprint: 'fp-device-b', userAgent: DESKTOP_UA });
-  assert.equal(secondDeviceRelogin.user.id, secondDeviceLogin.user.id);
+  await superAdminService.createRestaurantUser(restaurant.id, { username: 'shared', password: 'shared12345', role: 'CASHIER' });
+  await assert.rejects(
+    () => superAdminService.createRestaurantUser(restaurant.id, { username: 'shared', password: 'shared12345', role: 'CASHIER' }),
+    /already taken/,
+  );
 });
 
-test('same username across two different restaurants (with distinct passwords) still resolves correctly after Part 9\'s device-userId hint (no regression)', async () => {
-  const { restaurant: restaurantA, activationToken: tokenA } = await createTestRestaurant({ adminUsername: 'dup_user', adminPassword: 'passwordA123' });
-  const { restaurant: restaurantB, activationToken: tokenB } = await createTestRestaurant({ adminUsername: 'dup_user', adminPassword: 'passwordB123' });
+test('a username must be globally unique across restaurants too — the same username can no longer be reused when creating a second restaurant', async () => {
+  const { activationToken: tokenA } = await createTestRestaurant({ adminUsername: 'dup_user', adminPassword: 'passwordA123' });
   await authService.activateRestaurantLicense({ username: 'dup_user', password: 'passwordA123', token: tokenA, fingerprint: 'fp-cross-a', userAgent: DESKTOP_UA });
-  const loginB = await authService.activateRestaurantLicense({ username: 'dup_user', password: 'passwordB123', token: tokenB, fingerprint: 'fp-cross-b', userAgent: DESKTOP_UA });
-  assert.equal(loginB.user.restaurantId, restaurantB.id);
+  await assert.rejects(
+    () => createTestRestaurant({ adminUsername: 'dup_user', adminPassword: 'passwordB123' }),
+    /already taken/,
+  );
+});
+
+// Regression: deleteRestaurant only ever flipped status to 'deleted', which
+// merely hid it from listRestaurants() — login never checked for 'deleted'
+// (only 'suspended'), so every user of a "deleted" restaurant could keep
+// logging in and working indefinitely.
+test('login is blocked once the restaurant has been deleted', async () => {
+  const { restaurant, admin, activationToken } = await createTestRestaurant();
+  await authService.activateRestaurantLicense({
+    username: admin.username, password: 'admin12345', token: activationToken, fingerprint: 'fp-del-1', userAgent: DESKTOP_UA,
+  });
+  await superAdminService.deleteRestaurant(restaurant.id);
+  await assert.rejects(
+    () => authService.loginRestaurantUser({ username: admin.username, password: 'admin12345', fingerprint: 'fp-del-2', userAgent: DESKTOP_UA }),
+    /subscription has expired/,
+  );
+});
+
+test('generateOfflineLicense computes offlineExpiration from offlineDays', async () => {
+  const withDays = authService.generateOfflineLicense({
+    restaurantId: 'r1', licenseId: 'l1', deviceId: 'd1', fingerprint: 'fp1',
+    expirationDate: new Date(Date.now() + 86400000 * 30).toISOString(),
+    offlineDays: 7, validationIntervalHours: 24,
+  });
+  const daysUntil = (new Date(withDays.offlineExpiration).getTime() - Date.now()) / 86400000;
+  assert.ok(daysUntil > 6.9 && daysUntil < 7.1, 'offlineExpiration must be ~7 days from now');
 });

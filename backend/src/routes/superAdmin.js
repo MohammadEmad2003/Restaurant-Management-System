@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { auth, requireDeviceBound } from '../middleware/auth.js';
 import { requireSuperAdmin } from '../middleware/rbac.js';
-import { asyncHandler } from '../middleware/errorHandler.js';
+import { asyncHandler, HttpError } from '../middleware/errorHandler.js';
 import { superAdminService } from '../services/superAdminService.js';
 import { licenseService } from '../services/licenseService.js';
 import { deviceService } from '../services/deviceService.js';
@@ -66,6 +66,7 @@ router.post('/licenses/:restaurantId/reduce', h(async (req, res) => res.json(awa
 router.patch('/licenses/:restaurantId/suspend', h(async (req, res) => res.json(await licenseService.suspendLicense(req.params.restaurantId))));
 router.patch('/licenses/:restaurantId/revoke', h(async (req, res) => res.json(await licenseService.revokeLicense(req.params.restaurantId))));
 router.patch('/licenses/:restaurantId/offline-days', h(async (req, res) => res.json(await licenseService.changeOfflineDays(req.params.restaurantId, req.body.days))));
+router.post('/licenses/:restaurantId/set-forever', h(async (req, res) => res.json(await licenseService.setLicenseForever(req.params.restaurantId))));
 router.patch('/licenses/:restaurantId/max-devices', h(async (req, res) => res.json(await licenseService.changeMaximumDevices(req.params.restaurantId, req.body.count))));
 router.patch('/licenses/:restaurantId/validation-interval', h(async (req, res) => res.json(await licenseService.changeValidationInterval(req.params.restaurantId, req.body.hours))));
 router.patch('/licenses/:restaurantId/max-concurrent-cashiers', h(async (req, res) => res.json(await licenseService.changeMaxConcurrentCashierSessions(req.params.restaurantId, req.body.count))));

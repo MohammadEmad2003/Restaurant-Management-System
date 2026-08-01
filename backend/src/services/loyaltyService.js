@@ -19,6 +19,10 @@ export const loyaltyService = {
   },
 
   async redeem(clientId, points, user) {
+    // A non-positive or non-finite value would pass the balance check below
+    // (or even increase the balance, since subtracting a negative number
+    // adds it) — points redeemed must be a real positive amount.
+    if (!Number.isFinite(points) || points <= 0) throw new HttpError(400, 'points must be a positive number');
     const client = await repo('clients').getById(clientId);
     if (!client) throw new HttpError(404, 'client not found');
     if (user?.restaurantId && client.restaurantId && client.restaurantId !== user.restaurantId) {

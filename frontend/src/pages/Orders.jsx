@@ -45,6 +45,10 @@ export default function Orders() {
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [deliveryPerson, setDeliveryPerson] = useState('');
   const [deliveryAgentId, setDeliveryAgentId] = useState('');
+  // When the cashier genuinely doesn't know who's delivering yet — the order
+  // still goes out, but with no receipt printed and no delivery man name; it
+  // lands in Pending Payments where one can be assigned and printed later.
+  const [deliveryPersonUnknown, setDeliveryPersonUnknown] = useState(false);
   const [placing, setPlacing] = useState(false);
   // Shows the four simultaneous collection-method options (Paid Now / End of
   // Day / Print Unpaid / Cancel) the moment the cashier checks out a
@@ -143,7 +147,7 @@ export default function Orders() {
 
   const resetCart = () => {
     setCart([]); setClient(null); setCustQuery(''); setWalkIn(false); setDeliveryAddress(''); setDeliveryPerson('');
-    setDeliveryAgentId('');
+    setDeliveryAgentId(''); setDeliveryPersonUnknown(false);
   };
 
   /** Creates the order via the API, resets the cart, and returns the created
@@ -178,9 +182,16 @@ export default function Orders() {
 
   const charge = () => {
     if (!cart.length) return;
-    // Delivery orders must record the delivery man's name (it is printed on the receipt).
-    if (isDelivery && !deliveryPerson.trim()) {
+    // Delivery orders must record the delivery man's name (it is printed on
+    // the receipt) — UNLESS the cashier has explicitly said they don't know
+    // who it is yet, in which case the order still goes out, just without a
+    // name and without printing right now.
+    if (isDelivery && !deliveryPerson.trim() && !deliveryPersonUnknown) {
       notify(t('orders.deliveryPersonRequired', 'Enter the delivery man name first'), 'error');
+      return;
+    }
+    if (isDelivery && deliveryPersonUnknown) {
+      placeUnknownDelivery();
       return;
     }
     if (isDelivery) {
@@ -196,6 +207,24 @@ export default function Orders() {
     // real money landing in the drawer right now, so refresh the shared
     // figure the instant the order is created, same as the delivery paths do.
     placeAndPrint().then((order) => { if (order && payment === 'cash') refreshCashDrawer(); });
+  };
+
+  /** Delivery man unknown at checkout time — save the order as a real pending
+   * payment (nothing is collected/printed yet, exactly like End of Day), but
+   * skip printing entirely: there is no delivery man name to put on a receipt
+   * yet. It shows up in Pending Payments, where the name can be filled in and
+   * the receipt printed once it's actually known. */
+  const placeUnknownDelivery = async () => {
+    setPlacing(true);
+    try {
+      const order = await placeOrder({ paymentTiming: 'END_OF_DAY' });
+      notify(t('orders.deliveryPersonUnknownSaved', 'Order saved as pending — assign a delivery man in Pending Payments to print the receipt.'));
+      refreshPendingCount();
+      return order;
+    } catch (e) {
+      notify(e.response?.data?.error || 'Failed', 'error');
+      return null;
+    } finally { setPlacing(false); }
   };
 
   const placeAndPrint = async (paymentTiming) => {
@@ -395,12 +424,23 @@ export default function Orders() {
                 </div>
               )}
               <div className="field" style={{ marginBottom: 10 }}>
-                <label>{t('orders.deliveryPerson', 'Delivery Man')} *</label>
-                {/* Required for delivery orders — printed on the receipt */}
-                <input className="input" value={deliveryPerson}
+                <label>{t('orders.deliveryPerson', 'Delivery Man')} {!deliveryPersonUnknown && '*'}</label>
+                {/* Required for delivery orders — printed on the receipt —
+                  * unless the cashier doesn't know it yet (see checkbox below). */}
+                <input className="input" value={deliveryPerson} disabled={deliveryPersonUnknown}
                   onChange={(e) => setDeliveryPerson(e.target.value)}
                   placeholder={t('orders.deliveryPersonPlaceholder', "Delivery man's name")} />
               </div>
+              <button className={`btn btn--sm ${deliveryPersonUnknown ? 'btn--primary' : ''}`}
+                style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }}
+                onClick={() => { setDeliveryPersonUnknown((v) => !v); if (!deliveryPersonUnknown) setDeliveryPerson(''); }}>
+                {deliveryPersonUnknown ? '✓ ' : ''}{t('orders.deliveryPersonUnknown', "I don't know the delivery man yet")}
+              </button>
+              {deliveryPersonUnknown && (
+                <div className="muted" style={{ fontSize: 11.5, marginBottom: 10 }}>
+                  {t('orders.deliveryPersonUnknownHint', 'The order will be saved as pending and nothing will print now. Assign the delivery man later from Pending Payments to print the receipt.')}
+                </div>
+              )}
               <div className="field" style={{ marginBottom: 10 }}>
                 <label>{t('orders.deliveryAddress', 'Delivery Address')}</label>
                 {/* Multi-line textarea for detailed delivery addresses (landmarks, floor, apartment) */}
@@ -411,9 +451,11 @@ export default function Orders() {
               {/* Applies whether or not a registered agent is picked — a
                 * manual/free-text courier goes through the exact same
                 * collection decision as a registered Delivery Agent. */}
-              <div className="muted" style={{ fontSize: 11.5, marginBottom: 10 }}>
-                {t('orders.collectionChoiceHint', 'Choosing to checkout will ask how the delivery agent will pay.')}
-              </div>
+              {!deliveryPersonUnknown && (
+                <div className="muted" style={{ fontSize: 11.5, marginBottom: 10 }}>
+                  {t('orders.collectionChoiceHint', 'Choosing to checkout will ask how the delivery agent will pay.')}
+                </div>
+              )}
             </>
           )}
 

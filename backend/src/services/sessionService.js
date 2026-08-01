@@ -82,6 +82,17 @@ export const sessionService = {
     return { terminated: rows.length };
   },
 
+  /** Terminates every active session for a restaurant, Admins included — used
+   * when a restaurant is suspended/deleted, since at that point nobody should
+   * keep working regardless of role (unlike terminateAllCashierSessions,
+   * which deliberately only targets cashiers for the "force logout cashiers"
+   * admin action). */
+  async terminateAllSessionsForRestaurant(restaurantId) {
+    const rows = await store.findAll('login_sessions', { restaurantId, status: 'active' });
+    await Promise.all(rows.map((r) => store.update('login_sessions', r.id, { status: 'revoked', logoutTime: new Date().toISOString() })));
+    return { terminated: rows.length };
+  },
+
   /** Bulk-invalidates a suspended user's active sessions so the Sessions tab
    * reflects it immediately; a still-valid JWT can keep working until it
    * naturally expires (bounded by the 24h JWT lifetime + the sweep above) —

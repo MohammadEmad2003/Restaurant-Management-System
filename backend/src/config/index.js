@@ -27,8 +27,11 @@ export const config = {
     // fails over to the local store quickly instead of hanging.
     probeTimeoutMs: Number(process.env.SYNC_PROBE_TIMEOUT_MS) || 3000,
     readTimeoutMs: Number(process.env.SYNC_READ_TIMEOUT_MS) || 4000,
-    // After dropping offline, re-probe this often until back online.
-    offlineRetryMs: Number(process.env.SYNC_OFFLINE_RETRY_MS) || 5000,
+    // After dropping offline, re-probe this often until back online — kept
+    // short so the app snaps back to Supabase almost the instant internet
+    // genuinely returns, rather than sitting in local-only mode for a
+    // noticeable stretch after connectivity is actually restored.
+    offlineRetryMs: Number(process.env.SYNC_OFFLINE_RETRY_MS) || 1500,
   },
 
   // Absolute path to the local JSON store directory. Overridable (e.g. by

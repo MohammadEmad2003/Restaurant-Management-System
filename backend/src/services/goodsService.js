@@ -16,6 +16,13 @@ export const goodsService = {
     }
     const qty = Number(quantity);
     const price = Number(unitPrice ?? good.purchasePrice);
+    // Without this, a non-numeric/negative quantity or price (this route has
+    // no validateBody schema check) silently corrupts the stock record —
+    // `quantityAvailable` becomes NaN (or negative), which then permanently
+    // breaks that item's low-stock alert (`NaN <= x` is always false) and
+    // every future purchase/deduction keeps compounding the corruption.
+    if (!Number.isFinite(qty) || qty <= 0) throw new HttpError(400, 'quantity must be a positive number');
+    if (!Number.isFinite(price) || price < 0) throw new HttpError(400, 'unitPrice must be a non-negative number');
     const totalCost = +(qty * price).toFixed(2);
 
     const updated = await repo('goods').update(id, {

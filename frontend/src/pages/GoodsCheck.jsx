@@ -5,8 +5,13 @@ import { useFetch } from '../hooks/useApi.js';
 import { usePaginated } from '../hooks/usePaginated.js';
 import { api } from '../api/client.js';
 import { useUI } from '../store/ui.js';
-import { Card, PageHeader, Spinner, DataTable, Badge, Modal, Stat, DateField } from '../components/ui.jsx';
+import { Card, PageHeader, Spinner, DataTable, Badge, Modal, Stat, DateField, Input } from '../components/ui.jsx';
 import { money, num, date, shortName } from '../utils/format.js';
+
+// Sentinel select value for "let the admin type their own reason instead of
+// picking one of the fixed options" — never sent to the backend as-is (the
+// actual free-text value from the input below it is sent instead).
+const OTHER_REASON = '__other__';
 
 export default function GoodsCheck() {
   const { t } = useTranslation();
@@ -15,7 +20,10 @@ export default function GoodsCheck() {
   const { data: checks, loading, refetch } = useFetch('/goods-checks', [], []);
   const { data: goods } = useFetch('/goods', []);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ goodId: '', actualQuantity: '', reason: 'Spoilage' });
+  const [form, setForm] = useState({
+    goodId: '', actualQuantity: '', reason: 'Spoilage',
+    customReason: '',
+  });
 
   const [reasonFilter, setReasonFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
@@ -35,10 +43,19 @@ export default function GoodsCheck() {
   const [waste, setWaste] = useState(null);
 
   const submit = async () => {
+    if (form.reason === OTHER_REASON && !form.customReason.trim()) {
+      notify(t('goodsCheck.customReasonRequired', 'Type a reason, or pick one of the options instead'), 'error');
+      return;
+    }
     try {
-      await api.post('/goods-checks', { ...form, actualQuantity: Number(form.actualQuantity), date: new Date().toISOString().slice(0, 10) });
+      const reason = form.reason === OTHER_REASON ? form.customReason.trim() : form.reason;
+      await api.post('/goods-checks', { ...form, reason, actualQuantity: Number(form.actualQuantity), date: new Date().toISOString().slice(0, 10) });
       notify(t('goodsCheck.checkRecorded', 'Check recorded & stock adjusted'));
-      setOpen(false); setForm({ goodId: '', actualQuantity: '', reason: 'Spoilage' });
+      setOpen(false);
+      setForm({
+        goodId: '', actualQuantity: '', reason: 'Spoilage',
+        customReason: '',
+      });
       refetch(); fetchWaste();
     } catch (e) { notify(e.response?.data?.error || t('common.failed', 'Failed'), 'error'); }
   };
@@ -117,9 +134,15 @@ export default function GoodsCheck() {
         <div className="field"><label>{t('goodsCheck.actualCountedQuantity', 'Actual Counted Quantity')}</label><input className="input" type="number" value={form.actualQuantity} onChange={(e) => setForm({ ...form, actualQuantity: e.target.value })} /></div>
         <div className="field"><label>{t('goodsCheck.reasonForDifference', 'Reason for difference')}</label>
           <select className="select" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })}>
-            {Object.entries(t('goodsCheck.reasons')).map(([key, val]) => <option key={key}>{val}</option>)}
+            {Object.entries(t('goodsCheck.reasons', { returnObjects: true })).map(([key, val]) => <option key={key} value={key}>{val}</option>)}
+            <option value={OTHER_REASON}>{t('goodsCheck.otherReason', 'Other (type your own)')}</option>
           </select>
         </div>
+        {form.reason === OTHER_REASON && (
+          <Input label={t('goodsCheck.customReasonLabel', 'Reason')} value={form.customReason}
+            onChange={(v) => setForm({ ...form, customReason: v })}
+            placeholder={t('goodsCheck.customReasonPlaceholder', 'Type the reason…')} />
+        )}
       </Modal>
     </div>
   );

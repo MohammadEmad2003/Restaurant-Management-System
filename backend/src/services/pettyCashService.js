@@ -11,7 +11,9 @@ const base = createCrudService('expenses', { entityName: 'petty_cash' });
  * used for Cash Advances.
  */
 async function create(data, user) {
-  const created = await base.create(data, user);
+  // The date is always the system's own current date, never client-supplied —
+  // the cashier/admin cannot back-date or post-date an expense from the UI.
+  const created = await base.create({ ...data, date: new Date().toISOString().slice(0, 10) }, user);
   const openShift = await cashierShiftService.openShiftFor(user?.sub, user);
   await cashLedgerService.record({
     restaurantId: user?.restaurantId,

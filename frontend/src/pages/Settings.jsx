@@ -91,15 +91,6 @@ export default function Settings() {
 
       <LocationsCard />
       <DeliveryAgentsCard />
-
-      <Card title={t('settings.supabase', 'Supabase Connection')} style={{ marginTop: 18 }}>
-        <p className="muted" style={{ fontSize: 13.5, lineHeight: 1.7 }}>
-          The system runs <b>offline-first</b> on a local JSON store with mock data. To enable cloud sync, paste your Supabase
-          Postgres connection string into <code>backend/.env</code> as <code>DATABASE_URL</code> (from a self-hosted instance's
-          <code>supabase start</code> output, or a hosted project's connection settings). The sync engine detects the connection
-          automatically and pushes all pending changes — no restart of your workflow required.
-        </p>
-      </Card>
     </div>
   );
 }
@@ -108,6 +99,7 @@ export default function Settings() {
 function LocationsCard() {
   const { t } = useTranslation();
   const notify = useUI((s) => s.notify);
+  const confirm = useUI((s) => s.confirm);
   const { data: locations, refetch } = useFetch('/locations', []);
   const [city, setCity] = useState('');
   const [area, setArea] = useState('');
@@ -122,6 +114,8 @@ function LocationsCard() {
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
   };
   const del = async (id) => {
+    const ok = await confirm({ message: t('locations.confirmDelete', 'Delete this location?'), danger: true, confirmLabel: t('common.delete') });
+    if (!ok) return;
     try { await api.delete(`/locations/${id}`); refetch(); }
     catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
   };
@@ -160,6 +154,7 @@ function LocationsCard() {
 function DeliveryAgentsCard() {
   const { t } = useTranslation();
   const notify = useUI((s) => s.notify);
+  const confirm = useUI((s) => s.confirm);
   const { data: agents, refetch } = useFetch('/delivery-agents', []);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -178,6 +173,20 @@ function DeliveryAgentsCard() {
     catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
   };
   const del = async (id) => {
+    // Deactivating (the toggle above) is the safer everyday action — this
+    // permanently removes the agent, so it needs a confirmation like every
+    // other destructive delete in the app. A deleted agent's own past orders
+    // are unaffected (the name/id are snapshotted onto the order at creation
+    // time), but they'd immediately vanish from the Pending Payments filter
+    // dropdown, so bulk-settling their remaining unpaid orders by agent stops
+    // being possible — worth surfacing that instead of a silent one-click delete.
+    const ok = await confirm({
+      title: t('deliveryAgents.deleteTitle', 'Delete delivery agent?'),
+      message: t('deliveryAgents.confirmDelete', 'Delete this delivery agent? If they still have unpaid orders, settling them by agent will no longer be possible — deactivating instead is usually safer.'),
+      danger: true,
+      confirmLabel: t('common.delete'),
+    });
+    if (!ok) return;
     try { await api.delete(`/delivery-agents/${id}`); refetch(); }
     catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
   };

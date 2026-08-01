@@ -1,15 +1,8 @@
 import { validate } from '../models/index.js';
 import { repo } from '../repositories/index.js';
-import { hashPassword, sanitize } from '../utils/hash.js';
 import { HttpError } from '../middleware/errorHandler.js';
-import { secureStore } from '../repositories/secureStore.js';
 
 const COLLECTIONS = { products: 'products', goods: 'goods', clients: 'clients', workers: 'workers' };
-const store = secureStore();
-
-function normalizeUserRole(role) {
-  return role === 'admin' ? 'ADMIN' : 'CASHIER';
-}
 
 /** Coerce a spreadsheet row into the entity shape. */
 function shape(entity, row) {
@@ -58,22 +51,15 @@ export const importService = {
     const created = [];
     for (const r of valid) {
       let data = r.data;
+      // Imported Workers are employee records only — same as
+      // workerService.create(), no `password`/credential is ever stored or
+      // usable for login. Only real Cashier accounts (created by the Super
+      // Admin) can authenticate; a bulk-imported worker never can.
       if (entity === 'workers') {
-        data = { ...data, passwordHash: await hashPassword(data.password || 'password123') };
+        data = { ...data };
         delete data.password;
       }
       const record = await repo(COLLECTIONS[entity]).create({ ...data, restaurantId: user?.restaurantId });
-      // Mirror imported workers as secure users so they can authenticate.
-      if (entity === 'workers') {
-        await store.create('users', {
-          restaurantId: user?.restaurantId,
-          username: record.username,
-          passwordHash: record.passwordHash,
-          role: normalizeUserRole(record.role),
-          status: record.status === 'inactive' ? 'inactive' : 'active',
-          legacyWorkerId: record.id,
-        });
-      }
       created.push(record);
     }
     return { imported: created.length, skipped: validation.invalid, ...validation };

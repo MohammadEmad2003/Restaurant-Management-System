@@ -15,6 +15,12 @@ export const schemas = {
     salary: t('number', { min: 0 }),
     hireDate: t('string'),
     status: t('string', { enum: ['active', 'inactive'], default: 'active' }),
+    // Set ONLY when this Worker record is the employee-side counterpart of a
+    // real, Super-Admin-created login account (a Cashier) — see
+    // workerService.js. A plain Admin-created Worker (chef, ordinary
+    // cashier-role employee with no app access, etc.) never has this set and
+    // has no `users` row at all, so it structurally cannot log in.
+    appUserId: t('string'),
   },
   attendance: {
     workerId: t('string', { required: true }),
@@ -84,7 +90,7 @@ export const schemas = {
     amount: t('number', { required: true }), // signed: positive = cash in, negative = cash out
     transactionType: t('string', {
       required: true,
-      enum: ['CASH_SALE', 'DELIVERY_AGENT_PAID_NOW', 'PENDING_PAYMENT_SETTLEMENT', 'SHIFT_OPEN_FLOAT', 'SHIFT_OPEN_ADJUSTMENT', 'SHIFT_CLOSE_ADJUSTMENT', 'CASH_ADVANCE', 'ORDER_CANCELLED_REVERSAL', 'PETTY_CASH_EXPENSE', 'RENT_PAID', 'SALARY_PAID'],
+      enum: ['CASH_SALE', 'DELIVERY_AGENT_PAID_NOW', 'PENDING_PAYMENT_SETTLEMENT', 'SHIFT_OPEN_FLOAT', 'SHIFT_OPEN_ADJUSTMENT', 'SHIFT_CLOSE_ADJUSTMENT', 'SHIFT_REOPEN_ADJUSTMENT', 'CASH_ADVANCE', 'CASH_ADVANCE_WITHDRAWAL', 'CASH_ADVANCE_RETURN', 'ORDER_CANCELLED_REVERSAL', 'PETTY_CASH_EXPENSE', 'RENT_PAID', 'SALARY_PAID'],
     }),
     orderId: t('string'),
     cashierShiftId: t('string'), // nullable — optional attribution only, never a precondition
@@ -110,6 +116,11 @@ export const schemas = {
     clientId: t('string'),
     cashierId: t('string'), // derived from the authenticated user when omitted
     orderDate: t('number'),
+    // Sequential, human-readable, business-day-scoped identifier — "T-001"
+    // (takeaway/walk-in) or "D-001" (delivery-collection) — always assigned
+    // by orderService.create() via businessDayService, never client-supplied.
+    // Never used as the database primary key; `id` remains that.
+    orderNumber: t('string'),
     products: t('array', { required: true }), // [{ productId, quantity, unitPrice }]
     totalPrice: t('number'),
     notes: t('string'),
@@ -184,6 +195,13 @@ export const schemas = {
     lateDeduction: t('number', { default: 0 }),
     bonus: t('number', { default: 0 }),
     deductions: t('number', { default: 0 }),
+    // The portion of `deductions` specifically caused by cash-advance
+    // settlement (as opposed to a manual admin adjustment) — kept separate so
+    // the Workers page can keep showing "how much was deducted for advances"
+    // even after the salary is paid (deductFromSalary marks the advance
+    // 'deducted' and drops it out of the *pending* total, but this field
+    // still records what actually happened for this specific month).
+    advanceDeduction: t('number', { default: 0 }),
     netPay: t('number'),
     notes: t('string'),
     paid: t('boolean', { default: false }),
@@ -217,6 +235,11 @@ export const schemas = {
   complaints: {
     clientId: t('string'),
     clientName: t('string', { required: true }),
+    // Optional link back to the order this complaint is about — set when
+    // filed from an order (Orders/order-history view); never required, since
+    // a complaint may also be filed with no specific order in mind.
+    orderId: t('string'),
+    orderNumber: t('string'),
     phone: t('string'),
     description: t('string', { required: true }),
     category: t('string', { enum: ['food', 'service', 'cleanliness', 'other'], default: 'other' }),
@@ -232,6 +255,10 @@ export const schemas = {
     locationName: t('string'),
     landlord: t('string'),
     amount: t('number', { required: true, min: 0 }),
+    // When this periodic payment was first entered/started — distinct from
+    // `dueDate` (when THIS instance is due) and `paidDate` (when it was last
+    // actually paid).
+    initialDate: t('string'),
     dueDate: t('string', { required: true }),
     paidDate: t('string'),
     paymentMethod: t('string', { enum: ['cash', 'card', 'bank-transfer'], default: 'cash' }),
@@ -239,6 +266,10 @@ export const schemas = {
     status: t('string', { enum: ['upcoming', 'paid', 'overdue'], default: 'upcoming' }),
     receiptUrl: t('string'),
     notes: t('string'),
+    // Every time this record is marked paid, an entry is appended here
+    // (never overwritten) — so re-marking it paid/unpaid/paid again still
+    // keeps a full log of every past payment, not just the most recent one.
+    paymentHistory: t('array', { default: [] }),
   },
   cashAdvances: {
     workerId: t('string', { required: true }),
@@ -246,8 +277,25 @@ export const schemas = {
     amount: t('number', { required: true, min: 0 }),
     date: t('string', { required: true }),
     description: t('string'),
-    status: t('string', { enum: ['pending', 'deducted', 'reimbursed'], default: 'pending' }),
+    // Tracks the salary-deduction side only now — "deducted" means payroll has
+    // actually applied it. The cash-repayment side (withdrawn/returned below)
+    // is tracked separately, since the two are independent financial events.
+    status: t('string', { enum: ['pending', 'deducted'], default: 'pending' }),
     repaymentMethod: t('string', { enum: ['salary-deduction', 'cash-reimbursement'], default: 'salary-deduction' }),
+    // Which YYYY-MM salary this advance is deducted from. Computed automatically
+    // (never client-supplied) at creation time for salary-deduction advances:
+    // the current month if it's not paid yet, otherwise the following month.
+    targetMonth: t('string'),
+    // Whether the cash was actually handed to the worker yet — creating this
+    // record does NOT touch the Cash Drawer; only confirming the withdrawal
+    // does (see cashAdvanceService.withdraw()).
+    withdrawn: t('boolean', { default: false }),
+    withdrawnAt: t('number'),
+    // Whether the worker has physically returned the cash (cash-reimbursement
+    // advances only — a salary-deduction advance is settled through payroll
+    // instead, never through this flag).
+    returned: t('boolean', { default: false }),
+    returnedAt: t('number'),
     notes: t('string'),
   },
   loyaltyTx: {

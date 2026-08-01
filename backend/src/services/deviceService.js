@@ -10,14 +10,14 @@ export const deviceService = {
   // NOTE: the device/session concurrency limits checked here are only race-free
   // because the caller (authService.loginRestaurantUser) wraps this whole call
   // in withLock(restaurantId, ...) — do not call this outside that lock.
-  async registerDevice({ restaurantId, userId, fingerprint, deviceName, operatingSystem }) {
+  async registerDevice({ restaurantId, userId, fingerprint, deviceName, operatingSystem, online = true }) {
     const license = await licenseService.requireLicense(restaurantId);
 
     // Existing device for this fingerprint should be re-used regardless of the
     // current active-device count so that re-login on a registered device works.
     const existing = await store.findOne('devices', { restaurantId, fingerprint });
     if (existing && existing.status === 'active') {
-      await this.updateValidationTimestamp(existing.id);
+      await this.updateValidationTimestamp(existing.id, { online });
       // registerDevice() only runs on a fresh, just-verified username+password
       // login (never on ordinary token-based requests) — every such login
       // rotates the secret so the browsing context that just authenticated
@@ -34,7 +34,7 @@ export const deviceService = {
         throw new HttpError(403, 'This device has been revoked. Contact your administrator.');
       }
       await store.update('devices', existing.id, { status: 'active', userId });
-      await this.updateValidationTimestamp(existing.id);
+      await this.updateValidationTimestamp(existing.id, { online });
       const reactivated = await store.findOne('devices', { id: existing.id });
       return this._issueSecret(reactivated);
     }
@@ -104,11 +104,21 @@ export const deviceService = {
     return store.update('devices', deviceId, { lastOnline: new Date().toISOString() });
   },
 
-  async updateValidationTimestamp(deviceId) {
-    return store.update('devices', deviceId, {
-      lastOnline: new Date().toISOString(),
-      lastOnlineValidationAt: new Date().toISOString(),
-    });
+  /**
+   * `lastOnlineValidationAt` is the anchor the monthly online-validation
+   * requirement is measured from — it must only ever advance when this
+   * device genuinely reached the licensing backend while online. A login or
+   * heartbeat that merely succeeded against locally-cached data (because the
+   * device is actually offline right now) still touches `lastOnline` for
+   * general bookkeeping, but must NOT push this timestamp forward, or a
+   * device could stay disconnected from the internet indefinitely while
+   * repeated offline-only logins kept silently renewing its own monthly
+   * deadline forever.
+   */
+  async updateValidationTimestamp(deviceId, { online = true } = {}) {
+    const patch = { lastOnline: new Date().toISOString() };
+    if (online) patch.lastOnlineValidationAt = new Date().toISOString();
+    return store.update('devices', deviceId, patch);
   },
 
   async deleteDevice(deviceId, restaurantId) {

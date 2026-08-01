@@ -53,6 +53,57 @@ test('validateDeviceSecret tolerates legacy devices with no hash yet, but reject
   assert.equal(deviceService.validateDeviceSecret(device, 'wrong-secret'), false);
 });
 
+test('updateValidationTimestamp only advances lastOnlineValidationAt when called with online:true, but always touches lastOnline', async () => {
+  const { restaurant, admin, activationToken } = await createTestRestaurant();
+  await licenseService.activateLicense(restaurant.id, activationToken);
+  const device = await deviceService.registerDevice({ restaurantId: restaurant.id, userId: admin.id, fingerprint: 'fp-monthly-1' });
+  const original = await deviceService.getDevice(device.id);
+  await new Promise((r) => setTimeout(r, 5));
+
+  const afterOffline = await deviceService.updateValidationTimestamp(device.id, { online: false });
+  assert.equal(afterOffline.lastOnlineValidationAt, original.lastOnlineValidationAt, 'an offline-only contact must not advance the monthly-validation anchor');
+  assert.notEqual(afterOffline.lastOnline, original.lastOnline, 'lastOnline is general bookkeeping and should still update regardless');
+
+  await new Promise((r) => setTimeout(r, 5));
+  const afterOnline = await deviceService.updateValidationTimestamp(device.id, { online: true });
+  assert.notEqual(afterOnline.lastOnlineValidationAt, original.lastOnlineValidationAt, 'a genuinely online contact must advance the monthly-validation anchor');
+});
+
+test('computeMonthlyValidationDeadline is derived from the device\'s own lastOnlineValidationAt, not from "now"', async () => {
+  const past = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString(); // 40 days ago
+  const deadline = authService.computeMonthlyValidationDeadline(past);
+  assert.ok(new Date(deadline).getTime() < Date.now(), 'a device last validated 40 days ago must already be past its monthly deadline');
+});
+
+test('generateOfflineLicense signs a monthlyValidationDeadline into the payload, ~30 days from the given anchor', async () => {
+  const anchor = new Date().toISOString();
+  const license = authService.generateOfflineLicense({
+    restaurantId: 'r1', licenseId: 'l1', deviceId: 'd1', fingerprint: 'fp1',
+    expirationDate: new Date(Date.now() + 86400000 * 365).toISOString(),
+    offlineDays: 7, validationIntervalHours: 24,
+    monthlyValidationDeadline: authService.computeMonthlyValidationDeadline(anchor),
+  });
+  const payload = JSON.parse(license.payload);
+  const daysUntil = (new Date(payload.monthlyValidationDeadline).getTime() - Date.now()) / 86400000;
+  assert.ok(daysUntil > 29.9 && daysUntil < 30.1, 'monthlyValidationDeadline must be ~30 days from the anchor');
+});
+
+test('a login while genuinely offline does not extend a device\'s monthly-validation deadline beyond its last real online contact', async () => {
+  const { restaurant, admin, activationToken } = await createTestRestaurant();
+  await licenseService.activateLicense(restaurant.id, activationToken);
+  await authService.loginRestaurantUser({ username: admin.username, password: 'admin12345', fingerprint: 'fp-monthly-2', userAgent: DESKTOP_UA });
+  const onlineDevice = await deviceService.getDevice((await deviceService.findByFingerprint(restaurant.id, 'fp-monthly-2')).id);
+  const firstValidatedAt = onlineDevice.lastOnlineValidationAt;
+
+  // Simulate a re-login that only succeeded against local data (device is
+  // actually offline) — deviceService itself has no notion of connectivity,
+  // that's the caller's job (authService reads connectivity.isOnline), so
+  // this test exercises the same primitive authService relies on directly.
+  await new Promise((r) => setTimeout(r, 5));
+  const afterOfflineRelogin = await deviceService.updateValidationTimestamp(onlineDevice.id, { online: false });
+  assert.equal(afterOfflineRelogin.lastOnlineValidationAt, firstValidatedAt, 'repeated offline-only logins must never push the monthly deadline forward');
+});
+
 test('device-limit race: N concurrent logins (new fingerprints) against maximumDevices=1 only let one through', async () => {
   // registerDevice() itself is only race-free when called from within
   // authService's per-restaurant lock (see its own comment) — so this

@@ -15,10 +15,13 @@ export default function PettyCash() {
   const notify = useUI((s) => s.notify);
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const { data: entries, loading, refetch } = useFetch('/petty-cash', [], []);
 
-  const blank = () => ({ amount: '', category: 'other', description: '', date: new Date().toISOString().split('T')[0] });
+  // No `date` field — the backend always stamps the system's current date;
+  // it is never something the cashier/admin can pick or backdate here.
+  const blank = () => ({ amount: '', category: 'other', description: '' });
   const [form, setForm] = useState(blank());
 
   const filtered = useMemo(() => (entries || []).filter((e) => {
@@ -35,6 +38,17 @@ export default function PettyCash() {
 
   const submit = async () => {
     if (!form.amount || Number(form.amount) <= 0) return notify(t('pettyCash.fillRequired', 'Amount and description are required'), 'error');
+    // "Other" isn't a real, self-explanatory category — the admin must say
+    // what it actually was, the same free-text reason a GoodsCheck "Other"
+    // reason requires.
+    if (form.category === 'other' && !form.description.trim()) {
+      return notify(t('pettyCash.otherReasonRequired', 'Please type what this expense was for'), 'error');
+    }
+    // Guards against a double-click (or a slow response) firing this twice
+    // before the modal closes — this is real cash leaving the drawer, so a
+    // duplicate submit means a duplicate deduction, not just a duplicate row.
+    if (saving) return;
+    setSaving(true);
     try {
       await api.post('/petty-cash', { ...form, amount: Number(form.amount) });
       notify(t('pettyCash.created', 'Expense recorded'));
@@ -44,6 +58,7 @@ export default function PettyCash() {
       // Petty cash is real cash leaving the drawer — reflect it immediately.
       usePosStats.getState().refreshCashDrawer();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+    finally { setSaving(false); }
   };
 
   const setField = (key, value) => setForm((f) => ({ ...f, [key]: value }));
@@ -81,11 +96,14 @@ export default function PettyCash() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <Input label={t('pettyCash.amount')} type="number" value={form.amount} onChange={(v) => setField('amount', v)} />
           <Select label={t('pettyCash.category')} options={CATEGORY_OPTIONS.map((c) => ({ value: c, label: t(`pettyCash.cat_${c}`) }))} value={form.category} onChange={(v) => setField('category', v)} />
-          <Input label={t('pettyCash.description')} value={form.description} onChange={(v) => setField('description', v)} />
-          <Input label={t('pettyCash.date')} type="date" value={form.date} onChange={(v) => setField('date', v)} />
+          <Input
+            label={form.category === 'other' ? t('pettyCash.otherReasonLabel', 'Reason (please specify)') : t('pettyCash.description')}
+            placeholder={form.category === 'other' ? t('pettyCash.otherReasonPlaceholder', 'Type what this expense was for…') : undefined}
+            value={form.description} onChange={(v) => setField('description', v)}
+          />
           <div className="row" style={{ gap: 10, justifyContent: 'flex-end' }}>
             <Button color="ghost" onClick={() => setShowModal(false)}>{t('common.cancel')}</Button>
-            <Button onClick={submit}>{t('common.save')}</Button>
+            <Button onClick={submit} disabled={saving}>{t('common.save')}</Button>
           </div>
         </div>
       </Modal>

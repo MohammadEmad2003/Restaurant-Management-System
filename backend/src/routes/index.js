@@ -13,6 +13,7 @@ import { sessionService } from '../services/sessionService.js';
 import { deviceService } from '../services/deviceService.js';
 import { licenseService } from '../services/licenseService.js';
 import { buildFingerprint } from '../utils/device.js';
+import { connectivity } from '../sync/connectivity.js';
 import superAdminRoutes from './superAdmin.js';
 import licenseRoutes from './license.js';
 import { workerService } from '../services/workerService.js';
@@ -102,7 +103,9 @@ router.post('/auth/heartbeat', auth, h(async (req, res) => {
 
   let offlineLicense = null;
   if (req.user?.type === 'user' && req.user.deviceId && req.user.restaurantId) {
-    await deviceService.updateValidationTimestamp(req.user.deviceId);
+    // Only a genuinely online heartbeat counts toward the monthly
+    // online-validation requirement — see deviceService.updateValidationTimestamp.
+    const device = await deviceService.updateValidationTimestamp(req.user.deviceId, { online: connectivity.isOnline });
     const license = await licenseService.getLicenseByRestaurant(req.user.restaurantId);
     if (license) {
       offlineLicense = authService.generateOfflineLicense({
@@ -113,6 +116,7 @@ router.post('/auth/heartbeat', auth, h(async (req, res) => {
         expirationDate: license.expirationDate,
         offlineDays: license.offlineDays,
         validationIntervalHours: license.validationIntervalHours,
+        monthlyValidationDeadline: authService.computeMonthlyValidationDeadline(device?.lastOnlineValidationAt),
       });
     }
   }
@@ -130,12 +134,27 @@ router.use(auth, requireDeviceBound);
 router.get('/workers', auth, rbac('ADMIN'), h(async (req, res) => res.json(await workerService.list(req.query, req.user))));
 // Cashier-only minimal list (id + name) — accessible to cashiers for shift handover.
 // Declared BEFORE '/workers/:id' so ":id" doesn't capture "cashiers".
-router.get('/workers/cashiers', auth, rbac('CASHIER'), h(async (req, res) => res.json(await workerService.cashiers(req.user))));
+router.get('/workers/cashiers', auth, rbac('ADMIN', 'CASHIER'), h(async (req, res) => res.json(await workerService.cashiers(req.user))));
+// Minimal roster (id + name only, no salary) for both roles — e.g. the Cash
+// Advance form's worker picker, which a Cashier must be able to use without
+// ever receiving salary data over the wire.
+router.get('/workers/roster', auth, rbac('ADMIN', 'CASHIER'), h(async (req, res) => res.json(await workerService.roster(req.user))));
 router.get('/workers/:id', auth, rbac('ADMIN'), h(async (req, res) => res.json(await workerService.get(req.params.id, req.user))));
-router.get('/workers/:id/activity', auth, h(async (req, res) => res.json(await workerService.activity(req.params.id, req.user))));
+// `:id` here is actually a cashierId (users.sub — see workerService.activity,
+// which filters orders by cashierId), and Dashboard.jsx uses this for a
+// Cashier to see their OWN revenue/orders-created stats — so this can't be
+// Admin-only, but a Cashier must not be able to pass an arbitrary OTHER
+// cashier's id and see their revenue too.
+router.get('/workers/:id/activity', auth, h(async (req, res) => {
+  if (req.user?.role?.toUpperCase() !== 'ADMIN' && req.params.id !== req.user?.sub) {
+    return res.status(403).json({ error: 'Forbidden: insufficient role' });
+  }
+  res.json(await workerService.activity(req.params.id, req.user));
+}));
 router.post('/workers', auth, rbac('ADMIN'), validateBody('workers'), h(async (req, res) => res.status(201).json(await workerService.create(req.body, req.user))));
 router.put('/workers/:id', auth, rbac('ADMIN'), validateBody('workers', { partial: true }), h(async (req, res) => res.json(await workerService.update(req.params.id, req.body, req.user))));
 router.patch('/workers/:id/disable', auth, rbac('ADMIN'), h(async (req, res) => res.json(await workerService.disable(req.params.id, req.user))));
+router.patch('/workers/:id/reactivate', auth, rbac('ADMIN'), h(async (req, res) => res.json(await workerService.reactivate(req.params.id, req.user))));
 router.delete('/workers/:id', auth, rbac('ADMIN'), h(async (req, res) => res.json(await workerService.remove(req.params.id, req.user))));
 
 /* ─────────────────────── ATTENDANCE ────────────────────── */
@@ -165,7 +184,7 @@ router.get('/clients/:id', auth, h(async (req, res) => res.json(await clientServ
 router.get('/clients/:id/history', auth, h(async (req, res) => res.json(await clientService.history(req.params.id, req.user))));
 router.post('/clients', auth, validateBody('clients'), h(async (req, res) => res.status(201).json(await clientService.create(req.body, req.user))));
 router.put('/clients/:id', auth, validateBody('clients', { partial: true }), h(async (req, res) => res.json(await clientService.update(req.params.id, req.body, req.user))));
-router.delete('/clients/:id', auth, h(async (req, res) => res.json(await clientService.remove(req.params.id, req.user))));
+router.delete('/clients/:id', auth, rbac('ADMIN'), h(async (req, res) => res.json(await clientService.remove(req.params.id, req.user))));
 router.post('/clients/:id/phones', auth, h(async (req, res) => res.json(await clientService.addPhone(req.params.id, req.body.phone, req.user))));
 router.post('/clients/:id/addresses', auth, h(async (req, res) => res.json(await clientService.addAddress(req.params.id, req.body.address, req.user))));
 
@@ -256,6 +275,9 @@ router.delete('/rents/:id', auth, rbac('ADMIN'), h(async (req, res) => { await r
 router.patch('/rents/:id/pay', auth, rbac('ADMIN'), h(async (req, res) => {
   return res.json(await rentsSvc.pay(req.params.id, req.body, req.user));
 }));
+router.patch('/rents/:id/unpay', auth, rbac('ADMIN'), h(async (req, res) => {
+  return res.json(await rentsSvc.markUnpaid(req.params.id, req.user));
+}));
 router.get('/rents/upcoming', auth, h(async (req, res) => {
   const rents = await rentsSvc.list({ status: ['upcoming', 'overdue'] }, req.user);
   const now = Date.now();
@@ -267,7 +289,9 @@ router.get('/rents/upcoming', auth, h(async (req, res) => {
 router.get('/cash-advances', auth, h(async (req, res) => res.json(await cashAdvanceService.list(req.query, req.user))));
 router.post('/cash-advances', auth, validateBody('cashAdvances'), h(async (req, res) => res.status(201).json(await cashAdvanceService.create(req.body, req.user))));
 router.patch('/cash-advances/:id', auth, validateBody('cashAdvances', { partial: true }), h(async (req, res) => res.json(await cashAdvanceService.update(req.params.id, req.body, req.user))));
-router.delete('/cash-advances/:id', auth, h(async (req, res) => { await cashAdvanceService.remove(req.params.id, req.user); res.status(204).end(); }));
+router.patch('/cash-advances/:id/withdraw', auth, h(async (req, res) => res.json(await cashAdvanceService.withdraw(req.params.id, req.user))));
+router.patch('/cash-advances/:id/return', auth, h(async (req, res) => res.json(await cashAdvanceService.returnAdvance(req.params.id, req.user))));
+router.delete('/cash-advances/:id', auth, rbac('ADMIN'), h(async (req, res) => { await cashAdvanceService.remove(req.params.id, req.user); res.status(204).end(); }));
 router.get('/cash-advances/pending/:workerId', auth, h(async (req, res) => res.json(await cashAdvanceService.getPendingByWorker(req.params.workerId, req.user))));
 
 /* ──────────────────── SUPPLIERS ───────────────────── */
@@ -337,15 +361,20 @@ router.put('/shifts/:id', auth, rbac('ADMIN'), h(async (req, res) => res.json(aw
 router.delete('/shifts/:id', auth, rbac('ADMIN'), h(async (req, res) => res.json(await shiftService.remove(req.params.id, req.user))));
 
 /* ──────────────── CASHIER CASH-DRAWER SHIFTS ───────────── */
-// Cashier-operated: open a till, reconcile counted vs expected cash, hand over to next cashier.
-router.get('/cashier-shifts/current', auth, rbac('CASHIER'), h(async (req, res) => res.json(await cashierShiftService.current(req.user))));
+// Cashier-operated, but an Admin can also open/close/hand over a till (e.g.
+// covering the till themselves, or initiating a handover) — both roles share
+// the exact same flow and endpoints; only ADMIN/CASHIER are meaningful here
+// (there is no till for a chef, etc.).
+router.get('/cashier-shifts/current', auth, rbac('ADMIN', 'CASHIER'), h(async (req, res) => res.json(await cashierShiftService.current(req.user))));
 // Restaurant-wide authoritative cash-drawer total — open to any authenticated
 // restaurant role (ADMIN and CASHIER both need the same number in POS/Dashboard);
 // already scoped to req.user.restaurantId internally, so no cross-tenant exposure.
 router.get('/cashier-shifts/current-all', auth, h(async (req, res) => res.json(await cashierShiftService.currentAll(req.user))));
-router.get('/cashier-shifts', auth, rbac('CASHIER'), h(async (req, res) => res.json(await cashierShiftService.list(req.query, req.user))));
-router.post('/cashier-shifts/open', auth, rbac('CASHIER'), h(async (req, res) => res.status(201).json(await cashierShiftService.open(req.user, req.body))));
-router.post('/cashier-shifts/:id/close', auth, rbac('CASHIER'), h(async (req, res) => res.json(await cashierShiftService.close(req.params.id, req.user, req.body))));
+router.get('/cashier-shifts', auth, rbac('ADMIN', 'CASHIER'), h(async (req, res) => res.json(await cashierShiftService.list(req.query, req.user))));
+router.get('/cashier-shifts/:id/analytics', auth, rbac('ADMIN', 'CASHIER'), h(async (req, res) => res.json(await cashierShiftService.shiftAnalytics(req.params.id, req.user))));
+router.post('/cashier-shifts/open', auth, rbac('ADMIN', 'CASHIER'), h(async (req, res) => res.status(201).json(await cashierShiftService.open(req.user, req.body))));
+router.post('/cashier-shifts/:id/close', auth, rbac('ADMIN', 'CASHIER'), h(async (req, res) => res.json(await cashierShiftService.close(req.params.id, req.user, req.body))));
+router.patch('/cashier-shifts/:id/reopen', auth, rbac('ADMIN', 'CASHIER'), h(async (req, res) => res.json(await cashierShiftService.reopen(req.params.id, req.user))));
 
 /* ──────────────────────── LOCATIONS ────────────────────── */
 // Admin-managed cities + areas used for customer profiling & profit-by-area.
@@ -356,17 +385,15 @@ router.delete('/locations/:id', auth, rbac('ADMIN'), h(async (req, res) => res.j
 
 /* ──────────────────────── SETTINGS ─────────────────────── */
 router.get('/settings', auth, h(async (req, res) => res.json(await settingsService.get(req.user))));
-router.put('/settings', auth, rbac('ADMIN'), h(async (req, res) => {
-  const current = (await repo('settings').getAll({ restaurantId: req.user?.restaurantId }))[0];
-  const saved = current ? await repo('settings').update(current.id, { ...req.body, restaurantId: req.user?.restaurantId }) : await repo('settings').create({ ...req.body, restaurantId: req.user?.restaurantId });
-  res.json(saved);
-}));
+router.put('/settings', auth, rbac('ADMIN'), h(async (req, res) => res.json(await settingsService.update(req.body, req.user))));
 
 /* ──────────────────── COMPLAINTS ───────────────────── */
 const complaintsService = createCrudService('complaints', { entityName: 'complaint' });
 router.get('/complaints', auth, h(async (req, res) => res.json(await complaintsService.list(req.query, req.user))));
 router.get('/complaints/:id', auth, h(async (req, res) => res.json(await complaintsService.get(req.params.id, req.user))));
-router.post('/complaints', auth, rbac('ADMIN'), validateBody('complaints'), h(async (req, res) => res.status(201).json(await complaintsService.create(req.body, req.user))));
+// Cashier can file a complaint (e.g. from an order they can see) but never
+// edit/resolve/delete one — those stay Admin-only actions.
+router.post('/complaints', auth, rbac('ADMIN', 'CASHIER'), validateBody('complaints'), h(async (req, res) => res.status(201).json(await complaintsService.create(req.body, req.user))));
 router.put('/complaints/:id', auth, rbac('ADMIN'), validateBody('complaints', { partial: true }), h(async (req, res) => res.json(await complaintsService.update(req.params.id, req.body, req.user))));
 router.delete('/complaints/:id', auth, rbac('ADMIN'), h(async (req, res) => res.json(await complaintsService.remove(req.params.id, req.user))));
 

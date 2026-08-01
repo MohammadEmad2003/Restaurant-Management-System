@@ -16,6 +16,10 @@ const TABS = [
   { key: 'sessions', label: 'Sessions', icon: Activity },
 ];
 
+/** Matches the backend's FOREVER_DATE sentinel (see licenseService.js) —
+ * shown as "Never" instead of a raw far-future date. */
+const isForeverLicense = (expirationDate) => new Date(expirationDate).getFullYear() >= 9999;
+
 export default function SuperAdminDashboard() {
   const { user, logout } = useAuth();
   const confirm = useUI((s) => s.confirm);
@@ -106,6 +110,28 @@ export default function SuperAdminDashboard() {
     }
   };
 
+  const deleteRestaurant = async (r) => {
+    const ok = await confirm({
+      title: 'Delete restaurant?',
+      message: `Delete "${r.restaurantName}"? Its license is suspended and every active session is logged out immediately — nobody there can keep using the app. The restaurant name becomes free to reuse; its data is otherwise left in place.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    await action('delete', `/superadmin/restaurants/${r.id}`, 'Restaurant deleted');
+  };
+
+  const suspendRestaurant = async (r) => {
+    const ok = await confirm({
+      title: 'Suspend restaurant?',
+      message: `Suspend "${r.restaurantName}"? Every active session is logged out immediately, and nobody there can log back in until it's reactivated.`,
+      confirmLabel: 'Suspend',
+      danger: true,
+    });
+    if (!ok) return;
+    await action('patch', `/superadmin/restaurants/${r.id}/suspend`, 'Suspended');
+  };
+
   const deleteUser = async (u) => {
     const ok = await confirm({
       title: 'Delete user?',
@@ -190,7 +216,8 @@ export default function SuperAdminDashboard() {
                       <button className="btn btn--ghost btn--sm" onClick={() => { setTab('users'); loadRestaurantUsers(r.id); }}>Users</button>
                       <button className="btn btn--ghost btn--sm" onClick={() => { setTab('licenses'); loadLicense(r.id); }}>License</button>
                       <button className="btn btn--ghost btn--sm" onClick={() => { setTab('devices'); loadDevices(r.id); }}>Devices</button>
-                      <button className="btn btn--danger btn--sm" onClick={() => action('patch', `/superadmin/restaurants/${r.id}/suspend`, 'Suspended')}><PauseCircle size={14} /></button>
+                      <button className="btn btn--danger btn--sm" onClick={() => suspendRestaurant(r)}><PauseCircle size={14} /></button>
+                      <button className="btn btn--danger btn--sm" title="Delete restaurant" onClick={() => deleteRestaurant(r)}><Trash2 size={14} /></button>
                     </div>
                   </div>
                 ))}
@@ -260,32 +287,28 @@ export default function SuperAdminDashboard() {
                     <div style={{ fontWeight: 700, marginBottom: 8 }}>{restaurant?.restaurantName || lic.restaurantId}</div>
                     <div className="row" style={{ gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
                       <span className={`badge badge--${lic.status === 'active' ? 'success' : lic.status === 'expired' ? 'danger' : 'warning'}`}>{lic.status}</span>
-                      <span className="badge" title="License Expiration — whether the restaurant's subscription is licensed to use the app at all">Expires: {new Date(lic.expirationDate).toLocaleDateString()}</span>
+                      <span className="badge" title="License Expiration — whether the restaurant's subscription is licensed to use the app at all">
+                        Expires: {isForeverLicense(lic.expirationDate) ? 'Never' : new Date(lic.expirationDate).toLocaleDateString()}
+                      </span>
                       <span className="badge">Devices: {lic.activeDevices}/{lic.maximumDevices}</span>
-                      <span className="badge" title="Rolling Online Validation — how often a device must successfully reconnect to keep its offline access refreshed">Validation: {lic.validationIntervalHours}h</span>
                       <span className="badge" title="Offline Access Lease — how long a device may keep working offline before it must validate online again">Offline Lease: {lic.offlineDays}d</span>
                       <span className="badge">Max Cashier Sessions: {lic.maxConcurrentCashierSessions ?? 1}</span>
-                      <span className="badge" title="Session Timeout — how long a user's session can stay idle before requiring re-authentication (not the JWT expiration)">Session Timeout: {lic.sessionTimeoutMinutes ?? 30}m</span>
                     </div>
-                    <p className="muted" style={{ fontSize: 11.5, marginBottom: 12 }}>
-                      Session Timeout, JWT Expiration, License Expiration, Rolling Validation and the Offline Access Lease are five independent controls — hover each badge above for what it governs.
-                    </p>
-                    <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+                    <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginTop: 8, marginBottom: 12 }}>
                       <button className="btn btn--sm" onClick={() => { navigator.clipboard.writeText(lic.activationToken); notify('Token copied'); }}>Copy Token</button>
                       <button className="btn btn--sm" onClick={() => action('post', `/superadmin/licenses/${lic.restaurantId}/regenerate-token`, 'Token regenerated')}>Regenerate</button>
                       <button className="btn btn--sm" onClick={() => action('post', `/superadmin/licenses/${lic.restaurantId}/renew`, 'Renewed')}>Renew</button>
+                      <button className="btn btn--sm" onClick={() => action('post', `/superadmin/licenses/${lic.restaurantId}/set-forever`, 'License set to never expire')}>Never Expire</button>
                       <button className="btn btn--danger btn--sm" onClick={() => action('patch', `/superadmin/licenses/${lic.restaurantId}/revoke`, 'Revoked')}>Revoke</button>
                     </div>
                     <CashierSessionSettings
                       key={lic.id}
                       lic={lic}
                       onSaveMax={(count) => action('patch', `/superadmin/licenses/${lic.restaurantId}/max-concurrent-cashiers`, 'Max cashier sessions updated', { count })}
-                      onSaveTimeout={(minutes) => action('patch', `/superadmin/licenses/${lic.restaurantId}/session-timeout`, 'Session timeout updated', { minutes })}
                     />
                     <ValidationSettings
                       key={`${lic.id}-validation`}
                       lic={lic}
-                      onSaveValidation={(hours) => action('patch', `/superadmin/licenses/${lic.restaurantId}/validation-interval`, 'Validation interval updated', { hours })}
                       onSaveOffline={(days) => action('patch', `/superadmin/licenses/${lic.restaurantId}/offline-days`, 'Offline access lease updated', { days })}
                     />
                   </div>
@@ -449,9 +472,8 @@ function CreateRestaurantForm({ onClose, onCreate }) {
   );
 }
 
-function CashierSessionSettings({ lic, onSaveMax, onSaveTimeout }) {
+function CashierSessionSettings({ lic, onSaveMax }) {
   const [maxSessions, setMaxSessions] = useState(lic.maxConcurrentCashierSessions ?? 1);
-  const [timeoutMinutes, setTimeoutMinutes] = useState(lic.sessionTimeoutMinutes ?? 30);
 
   return (
     <div className="row" style={{ gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -460,27 +482,16 @@ function CashierSessionSettings({ lic, onSaveMax, onSaveTimeout }) {
         <input className="input" type="number" min={1} value={maxSessions} onChange={(e) => setMaxSessions(Number(e.target.value))} style={{ width: 100 }} />
       </div>
       <button className="btn btn--sm" onClick={() => onSaveMax(maxSessions)}>Save</button>
-      <div className="field" style={{ margin: 0 }}>
-        <label>Session Timeout (minutes)</label>
-        <input className="input" type="number" min={1} value={timeoutMinutes} onChange={(e) => setTimeoutMinutes(Number(e.target.value))} style={{ width: 100 }} />
-      </div>
-      <button className="btn btn--sm" onClick={() => onSaveTimeout(timeoutMinutes)}>Save</button>
     </div>
   );
 }
 
-function ValidationSettings({ lic, onSaveValidation, onSaveOffline }) {
-  const [hours, setHours] = useState(lic.validationIntervalHours ?? 24);
+function ValidationSettings({ lic, onSaveOffline }) {
   const [days, setDays] = useState(lic.offlineDays ?? 7);
 
   return (
     <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
       <div className="row" style={{ gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-        <div className="field" style={{ margin: 0 }}>
-          <label>Validation Interval (hours)</label>
-          <input className="input" type="number" min={1} value={hours} onChange={(e) => setHours(Number(e.target.value))} style={{ width: 100 }} />
-        </div>
-        <button className="btn btn--sm" onClick={() => onSaveValidation(hours)}>Save</button>
         <div className="field" style={{ margin: 0 }}>
           <label>Offline Access Lease (days)</label>
           <input className="input" type="number" min={1} value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ width: 100 }} />
@@ -488,8 +499,7 @@ function ValidationSettings({ lic, onSaveValidation, onSaveOffline }) {
         <button className="btn btn--sm" onClick={() => onSaveOffline(days)}>Save</button>
       </div>
       <p className="muted" style={{ fontSize: 11.5, marginTop: 8 }}>
-        A device validates online at every login (and periodically while online via heartbeat), refreshing its offline lease.
-        Within the Validation Interval, it stays fully usable offline; past it (but before the Offline Access Lease expires) it's asked to reconnect; past the lease, it's signed out.
+        A device validates online at every login (and periodically while online). Within the Offline Access Lease, it stays usable offline; once the lease itself lapses, it's signed out and must reconnect to the internet to reactivate.
       </p>
     </div>
   );
@@ -497,7 +507,7 @@ function ValidationSettings({ lic, onSaveValidation, onSaveOffline }) {
 
 function CreateUserForm({ restaurants, defaultRestaurantId, onClose, onCreate }) {
   const [restaurantId, setRestaurantId] = useState(defaultRestaurantId || restaurants[0]?.id || '');
-  const [form, setForm] = useState({ username: 'cashier', password: 'cashier123', role: 'CASHIER' });
+  const [form, setForm] = useState({ username: 'cashier', password: 'cashier123', role: 'CASHIER', name: '' });
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState('');
 
@@ -505,9 +515,9 @@ function CreateUserForm({ restaurants, defaultRestaurantId, onClose, onCreate })
     if (!restaurantId || !form.username.trim() || !form.password) return;
     setSubmitting(true);
     try {
-      await onCreate(restaurantId, { username: form.username.trim(), password: form.password, role: form.role });
+      await onCreate(restaurantId, { username: form.username.trim(), password: form.password, role: form.role, name: form.name.trim() || undefined });
       setDone(`Created ${form.username.trim()}`);
-      setForm({ username: '', password: '', role: form.role });
+      setForm({ username: '', password: '', role: form.role, name: '' });
       setTimeout(() => setDone(''), 2000);
     } finally { setSubmitting(false); }
   };
@@ -528,6 +538,11 @@ function CreateUserForm({ restaurants, defaultRestaurantId, onClose, onCreate })
           <option value="CASHIER">CASHIER</option>
         </select>
       </div>
+      {form.role === 'CASHIER' && (
+        <div className="field"><label>Full Name (shown in Workers/Employees)</label>
+          <input className="input" placeholder={form.username || 'defaults to username'} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        </div>
+      )}
       <div className="row" style={{ gap: 10, justifyContent: 'flex-end', marginTop: 20 }}>
         <button className="btn btn--ghost" onClick={onClose}>Cancel</button>
         <button className="btn btn--primary" disabled={submitting} onClick={submit}>Create</button>

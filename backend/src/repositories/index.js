@@ -21,6 +21,7 @@ const PREFIX = {
   shifts: 'SHF', locations: 'LOC', settings: 'SET',
   loyaltyTx: 'LOY', complaints: 'CMP', rents: 'RNT', cashAdvances: 'CA',
   cashierShifts: 'CSH', deliveryAgents: 'DAG', cashLedger: 'LGR',
+  businessDays: 'BDY',
 };
 
 /**

@@ -1,12 +1,12 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Search, CheckCircle2, Printer, Clock, Wallet, ListChecks } from 'lucide-react';
+import { Search, CheckCircle2, Printer, Clock, Wallet, ListChecks, Truck } from 'lucide-react';
 import { api, openReport } from '../api/client.js';
 import { useFetch } from '../hooks/useApi.js';
 import { usePaginated } from '../hooks/usePaginated.js';
 import { useUI } from '../store/ui.js';
 import { usePosStats } from '../store/posStats.js';
-import { Card, PageHeader, Spinner, Badge, DataTable, Dropdown, DateField, Stat } from '../components/ui.jsx';
+import { Card, PageHeader, Spinner, Badge, DataTable, Dropdown, DateField, Stat, Modal, Input } from '../components/ui.jsx';
 import { money, shortName, date } from '../utils/format.js';
 
 export default function PendingPayments() {
@@ -79,6 +79,28 @@ export default function PendingPayments() {
   const printInvoice = (order) => {
     const ar = lang === 'ar';
     openReport(`/orders/${order.id}/invoice.pdf${ar ? '?lang=ar' : ''}`);
+  };
+
+  // Orders placed with "I don't know the delivery man yet" (Orders.jsx) land
+  // here with no deliveryPerson/deliveryAgentName — this fills it in and
+  // prints the receipt for the first time, now that it's actually known.
+  const [assignTarget, setAssignTarget] = useState(null);
+  const [assignName, setAssignName] = useState('');
+  const [assigning, setAssigning] = useState(false);
+
+  const openAssign = (order) => { setAssignTarget(order); setAssignName(''); };
+
+  const confirmAssign = async () => {
+    if (!assignTarget || !assignName.trim()) return;
+    setAssigning(true);
+    try {
+      const { data } = await api.put(`/orders/${assignTarget.id}`, { deliveryPerson: assignName.trim() });
+      notify(t('pendingPayments.deliveryPersonAssigned', 'Delivery man assigned'));
+      setAssignTarget(null);
+      printInvoice(data);
+      fetchPending();
+    } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+    finally { setAssigning(false); }
   };
 
   const markPaid = async (order) => {
@@ -265,7 +287,11 @@ export default function PendingPayments() {
                 {r.paymentStatus !== 'paid' && (
                   <button className="btn btn--sm btn--primary" onClick={() => markPaid(r)}><CheckCircle2 size={13} /> {t('pendingPayments.collect', 'Collect')}</button>
                 )}
-                <button className="btn btn--icon btn--sm" title={t('pendingPayments.printInvoice', 'Print Invoice')} onClick={() => printInvoice(r)}><Printer size={13} /></button>
+                {!r.deliveryAgentName && !r.deliveryPerson ? (
+                  <button className="btn btn--sm" onClick={() => openAssign(r)}><Truck size={13} /> {t('pendingPayments.assignDeliveryPerson', 'Assign Delivery Man')}</button>
+                ) : (
+                  <button className="btn btn--icon btn--sm" title={t('pendingPayments.printInvoice', 'Print Invoice')} onClick={() => printInvoice(r)}><Printer size={13} /></button>
+                )}
               </div>) },
           ]}
           rows={paginatedData}
@@ -273,6 +299,11 @@ export default function PendingPayments() {
           pagination={{ currentPage: page, totalPages, onPageChange: setPage, pageSize, totalItems, onPageSizeChange: setPageSize }}
         />
       </Card>
+
+      <Modal open={!!assignTarget} onClose={() => setAssignTarget(null)} title={t('pendingPayments.assignDeliveryPerson', 'Assign Delivery Man')}
+        footer={<><button className="btn" onClick={() => setAssignTarget(null)}>{t('common.cancel')}</button><button className="btn btn--primary" disabled={assigning || !assignName.trim()} onClick={confirmAssign}>{t('pendingPayments.assignAndPrint', 'Assign & Print')}</button></>}>
+        <Input label={t('orders.deliveryPerson', 'Delivery Man')} value={assignName} onChange={setAssignName} placeholder={t('orders.deliveryPersonPlaceholder', "Delivery man's name")} />
+      </Modal>
     </div>
   );
 }

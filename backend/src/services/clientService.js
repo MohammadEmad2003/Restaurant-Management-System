@@ -99,7 +99,9 @@ export const clientService = {
     return rows;
   },
 
-  /** Full order history + spend for a customer. */
+  /** Full order history + spend + complaints + pending-payment exposure for
+   * a customer — everything the detail view needs, derived from data that
+   * already exists elsewhere (never invented), in one call. */
   async history(id, user) {
     const client = await repo('clients').getById(id);
     if (!client) throw new HttpError(404, 'client not found');
@@ -108,11 +110,34 @@ export const clientService = {
     }
     const orders = (await repo('orders').getAll({ clientId: id, restaurantId: user?.restaurantId }))
       .sort((a, b) => (b.orderDate || 0) - (a.orderDate || 0));
+    const pendingOrders = orders.filter((o) => o.status !== 'cancelled' && (o.paymentStatus || 'paid') === 'pending');
+    const complaints = (await repo('complaints').getAll({ clientId: id, restaurantId: user?.restaurantId }))
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    // Most-ordered product — by total quantity across every non-cancelled
+    // order, using whatever the order snapshotted at the time (product name/
+    // id), so it stays correct even if the product is later renamed/deleted.
+    const qtyByProduct = {};
+    for (const o of orders) {
+      if (o.status === 'cancelled') continue;
+      for (const line of o.products || []) {
+        const key = line.productId || line.name;
+        if (!key) continue;
+        if (!qtyByProduct[key]) qtyByProduct[key] = { productId: line.productId, name: line.name, quantity: 0 };
+        qtyByProduct[key].quantity += line.quantity || 0;
+      }
+    }
+    const topProduct = Object.values(qtyByProduct).sort((a, b) => b.quantity - a.quantity)[0] || null;
+
     return {
       client,
       orders,
       totalSpent: orders.reduce((s, o) => s + (o.totalPrice || 0), 0),
       orderCount: orders.length,
+      lastOrderDate: orders[0]?.orderDate || null,
+      topProduct,
+      pendingPayments: { count: pendingOrders.length, total: +pendingOrders.reduce((s, o) => s + (o.totalPrice || 0), 0).toFixed(2) },
+      complaints,
     };
   },
 };

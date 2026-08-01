@@ -28,22 +28,12 @@ export async function runMigrations() {
     logger.success(`Created default restaurant: ${DEFAULT_RESTAURANT.name}`);
   }
 
-  // Migrate existing workers to users if users table is empty.
-  const users = await store.findAll('users');
-  if (!users.length) {
-    const workers = await repo('workers').getAll();
-    for (const worker of workers) {
-      await store.create('users', {
-        restaurantId: restaurant.id,
-        username: worker.username || worker.name,
-        passwordHash: worker.passwordHash || await hashPassword('password123'),
-        role: worker.role === 'admin' ? 'ADMIN' : 'CASHIER',
-        status: worker.status === 'inactive' ? 'inactive' : 'active',
-        legacyWorkerId: worker.id,
-      });
-    }
-    logger.success(`Migrated ${workers.length} workers to users`);
-  }
+  // NOTE: this used to auto-migrate every existing Worker into a login-
+  // capable `users` row on first boot. That directly contradicts the
+  // current architecture — a Worker is an employee record only and must
+  // never automatically gain application login access; only the Super
+  // Admin creates real accounts (see workerService.js/superAdminService.js).
+  // Removed deliberately, not an oversight.
 
   // Ensure default restaurant has a license.
   const license = await store.findOne('licenses', { restaurantId: restaurant.id });

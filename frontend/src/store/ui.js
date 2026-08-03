@@ -1,11 +1,22 @@
 import { create } from 'zustand';
 import { applyLanguage } from '../i18n/index.js';
 
-const initTheme = localStorage.getItem('theme') || 'light';
+// localStorage can throw on access (Safari "Block all cookies", some
+// kiosk/embedded WebViews, a full storage quota) — this runs at module load,
+// before React ever renders, so an uncaught throw here would crash the whole
+// app with a white screen and nothing to catch it.
+function safeGet(key, fallback) {
+  try { return localStorage.getItem(key) || fallback; } catch { return fallback; }
+}
+function safeSet(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* storage unavailable — theme/lang just won't persist */ }
+}
+
+const initTheme = safeGet('theme', 'light');
 document.documentElement.setAttribute('data-theme', initTheme);
 
 export const useUI = create((set, get) => ({
-  lang: localStorage.getItem('lang') || 'en',
+  lang: safeGet('lang', 'en'),
   theme: initTheme,
   sidebarOpen: true,
   toast: null,
@@ -32,15 +43,23 @@ export const useUI = create((set, get) => ({
   toggleTheme() {
     const theme = get().theme === 'light' ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('theme', theme);
+    safeSet('theme', theme);
     set({ theme });
   },
   toggleSidebar() {
     set({ sidebarOpen: !get().sidebarOpen });
   },
   notify(message, kind = 'success') {
-    set({ toast: { message, kind, id: Date.now() } });
-    setTimeout(() => set({ toast: null }), 3000);
+    const id = Date.now();
+    set({ toast: { message, kind, id } });
+    // Only clear the toast if it's still THIS call's toast — otherwise a
+    // second notify() within 3s of the first gets its own toast blanked out
+    // early by the first call's un-scoped timer (every previous call to
+    // notify scheduled an unconditional `set({toast:null})` with no
+    // reference to which toast it belonged to).
+    setTimeout(() => {
+      if (get().toast?.id === id) set({ toast: null });
+    }, 3000);
   },
 }));
 

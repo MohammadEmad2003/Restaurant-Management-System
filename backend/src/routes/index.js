@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 
-import { auth, requireDeviceBound } from '../middleware/auth.js';
+import { auth, requireDeviceBound, requireActiveLicense } from '../middleware/auth.js';
 import { config } from '../config/index.js';
 import { rbac } from '../middleware/rbac.js';
 import { validateBody } from '../middleware/validate.js';
@@ -98,7 +98,14 @@ router.post('/auth/logout', auth, h(async (req, res) => {
 // Also re-validates the device online and refreshes its offline license, so a
 // long-lived session's rolling-validation window keeps rolling forward instead
 // of only refreshing at the (rare) next full login.
-router.post('/auth/heartbeat', auth, h(async (req, res) => {
+// requireDeviceBound is essential here, not just auth: without it, a device
+// that's been revoked or a session that's been terminated by a Super Admin
+// could keep calling this endpoint forever with its still-cryptographically-
+// valid old JWT, and keep receiving a freshly-signed offline license that
+// extends its own rolling-validation/monthly-deadline windows — completely
+// undermining the revocation. requireDeviceBound already no-ops for
+// type:'super_admin' tokens, so this is safe for both token kinds.
+router.post('/auth/heartbeat', auth, requireDeviceBound, requireActiveLicense, h(async (req, res) => {
   if (req.user?.jti) await sessionService.heartbeat(req.user.jti);
 
   let offlineLicense = null;
@@ -127,8 +134,11 @@ router.post('/auth/heartbeat', auth, h(async (req, res) => {
 router.use('/superadmin', superAdminRoutes);
 router.use('/license', licenseRoutes);
 
-// All remaining restaurant routes require a device-bound token.
-router.use(auth, requireDeviceBound);
+// All remaining restaurant routes require a device-bound token AND an
+// active (non-expired/revoked/suspended) license, re-checked on every
+// single request — not just at login (see requireActiveLicense's own
+// comment in middleware/auth.js for why this matters).
+router.use(auth, requireDeviceBound, requireActiveLicense);
 
 /* ──────────────────────── WORKERS ──────────────────────── */
 router.get('/workers', auth, rbac('ADMIN'), h(async (req, res) => res.json(await workerService.list(req.query, req.user))));
@@ -159,7 +169,11 @@ router.delete('/workers/:id', auth, rbac('ADMIN'), h(async (req, res) => res.jso
 
 /* ─────────────────────── ATTENDANCE ────────────────────── */
 // Kiosk: any signed-in device lets a worker clock in/out with their own credentials.
-router.post('/attendance/check', auth, h(async (req, res) => res.json(await attendanceService.markByCredentials(req.body.username, req.body.password, req.user))));
+// Rate-limited like /auth/login — any authenticated device (even a
+// low-privilege cashier/chef token) could otherwise repeatedly guess other
+// workers' username/password pairs against this single kiosk-style route
+// with no lockout at all.
+router.post('/attendance/check', auth, authRateLimit(), h(async (req, res) => res.json(await attendanceService.markByCredentials(req.body.username, req.body.password, req.user))));
 router.post('/attendance/clock-in', auth, h(async (req, res) => {
   const workerId = req.body.workerId || await attendanceService.resolveWorkerId(req.user.sub);
   res.json(await attendanceService.clockIn(workerId, req.user));

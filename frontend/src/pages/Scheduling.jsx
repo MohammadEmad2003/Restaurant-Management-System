@@ -21,6 +21,7 @@ export default function Scheduling() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(blank);
+  const [saving, setSaving] = useState(false);
 
   const dayName = (d) => t(`scheduling.days.${DAY_KEYS[d]}`, DAY_KEYS[d]);
   const openNew = (dow = 0) => { setEditing(null); setForm({ ...blank, dayOfWeek: dow }); setOpen(true); };
@@ -28,6 +29,11 @@ export default function Scheduling() {
 
   const save = async () => {
     if (!form.workerId) { notify(t('scheduling.fillRequired', 'Pick a worker and day'), 'error'); return; }
+    // Guards against a double-click creating two identical shift rows for
+    // the same worker/day, which would then both factor into lateness/
+    // overtime calculations for that day.
+    if (saving) return;
+    setSaving(true);
     const worker = (workers || []).find((w) => w.id === form.workerId);
     const payload = { ...form, dayOfWeek: Number(form.dayOfWeek), workerName: worker?.name, role: worker?.role };
     try {
@@ -35,6 +41,7 @@ export default function Scheduling() {
       else { await api.post('/shifts', payload); notify(t('scheduling.created', 'Shift added')); }
       setOpen(false); refetch();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+    finally { setSaving(false); }
   };
 
   const del = async (id) => {
@@ -87,7 +94,7 @@ export default function Scheduling() {
       </div>
 
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? t('scheduling.editShift', 'Edit Shift') : t('scheduling.addShift', 'Add Shift')}
-        footer={<><button className="btn" onClick={() => setOpen(false)}>{t('common.cancel')}</button><button className="btn btn--primary" onClick={save}>{t('common.save')}</button></>}>
+        footer={<><button className="btn" onClick={() => setOpen(false)}>{t('common.cancel')}</button><button className="btn btn--primary" disabled={saving} onClick={save}>{t('common.save')}</button></>}>
         <div className="field"><label>{t('nav.workers')}</label>
           <select className="select" value={form.workerId} onChange={(e) => setForm({ ...form, workerId: e.target.value })}>
             <option value="">—</option>

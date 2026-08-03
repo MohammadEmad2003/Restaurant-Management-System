@@ -129,9 +129,16 @@ export async function evaluateOfflineAccess(license, currentFingerprint) {
     };
   }
 
-  const validatedAt = new Date(license.validatedAt).getTime();
-  const offlineExpiration = new Date(license.offlineExpiration).getTime();
-  const intervalMs = (license.validationIntervalHours ?? 24) * 60 * 60 * 1000;
+  // Read from the signed, verified `payload` — never the unsigned outer
+  // copy of these same fields (present only for convenience). A tampered
+  // localStorage blob could otherwise set the outer validatedAt/
+  // offlineExpiration to whatever it wants — signature verification above
+  // only covers `payload`, so editing the outer copy alone passes it
+  // untouched — completely bypassing the rolling-validation and offline-
+  // grace-period checks below (this exact bug existed here before).
+  const validatedAt = new Date(payload.validatedAt).getTime();
+  const offlineExpiration = new Date(payload.offlineExpiration).getTime();
+  const intervalMs = (payload.validationIntervalHours ?? 24) * 60 * 60 * 1000;
 
   if (Number.isNaN(offlineExpiration) || now >= offlineExpiration) {
     return { tier: 'expired', reason: 'Offline grace period has ended' };

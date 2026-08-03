@@ -5,23 +5,38 @@ import { markOnline, markOffline } from '../store/connectivity.js';
 export const api = axios.create({ baseURL: '/api', timeout: 20000 });
 
 function getDeviceFingerprint() {
-  let fp = localStorage.getItem('deviceFingerprint');
-  if (!fp) {
-    fp = getFingerprint();
-    localStorage.setItem('deviceFingerprint', fp);
+  try {
+    let fp = localStorage.getItem('deviceFingerprint');
+    if (!fp) {
+      fp = getFingerprint();
+      localStorage.setItem('deviceFingerprint', fp);
+    }
+    return fp;
+  } catch {
+    // localStorage can throw (Safari "Block all cookies", a full storage
+    // quota, some kiosk WebViews) — this runs inside the request
+    // interceptor below with no rejection handler registered via `use()`,
+    // so an uncaught throw here would silently fail every single API call
+    // in the app from that point on, without ever reaching the response
+    // interceptor's markOffline()/401 handling.
+    return getFingerprint();
   }
-  return fp;
 }
 
 // Attach JWT, device fingerprint, and (once issued) the server-signed device
 // secret to every request — the secret is what actually binds a session to
 // this device; the fingerprint alone is client-computed and replayable.
 api.interceptors.request.use((cfg) => {
-  const token = localStorage.getItem('token');
-  if (token) cfg.headers.Authorization = `Bearer ${token}`;
-  cfg.headers['X-Device-Fingerprint'] = getDeviceFingerprint();
-  const deviceSecret = localStorage.getItem('deviceSecret');
-  if (deviceSecret) cfg.headers['X-Device-Secret'] = deviceSecret;
+  try {
+    const token = localStorage.getItem('token');
+    if (token) cfg.headers.Authorization = `Bearer ${token}`;
+    cfg.headers['X-Device-Fingerprint'] = getDeviceFingerprint();
+    const deviceSecret = localStorage.getItem('deviceSecret');
+    if (deviceSecret) cfg.headers['X-Device-Secret'] = deviceSecret;
+  } catch {
+    // See getDeviceFingerprint's comment — never let a storage failure here
+    // silently break every outgoing request.
+  }
   return cfg;
 });
 
@@ -40,7 +55,11 @@ api.interceptors.response.use(
     if (!err.response) markOffline();
     else markOnline();
 
-    if (err.response?.status === 401 && !location.pathname.includes('login')) {
+    // The app uses HashRouter, so `location.pathname` is always the static
+    // base path and never contains "login" — that check was permanently
+    // true regardless of the actual current route (a no-op dead check).
+    // `location.hash` is the real current route here.
+    if (err.response?.status === 401 && !location.hash.includes('login')) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       const isSuperAdminRoute = location.hash.includes('superadmin');

@@ -14,6 +14,7 @@ export default function Loyalty() {
   const notify = useUI((s) => s.notify);
   const { data, loading, refetch } = useFetch('/clients', []);
   const [history, setHistory] = useState(null); // { name, entries } | null
+  const [redeeming, setRedeeming] = useState(() => new Set());
 
   const ranked = [...(data ?? [])].sort((a, b) => (b.loyaltyPoints || 0) - (a.loyaltyPoints || 0));
   const { page, pageSize, totalPages, totalItems, setPage, setPageSize, paginatedData: paginatedRanked } = usePaginated(ranked, 10);
@@ -29,13 +30,22 @@ export default function Loyalty() {
   const totalPoints = data.reduce((s, c) => s + (c.loyaltyPoints || 0), 0);
 
   const redeem = async (c) => {
+    // Guards against a double-click firing this twice before the table
+    // refetches — both clicks would otherwise read the same stale
+    // `c.loyaltyPoints` and redeem it twice (e.g. 100 of 150 points redeemed
+    // twice = 200 total, a real overspend of loyalty currency).
+    if (redeeming.has(c.id)) return;
     const pts = Math.min(100, c.loyaltyPoints);
     if (!pts) return notify('No points to redeem', 'error');
+    setRedeeming((prev) => new Set(prev).add(c.id));
     try {
       await api.post(`/loyalty/${c.id}/redeem`, { points: pts });
       notify(`Redeemed ${pts} points for ${shortName(c.name, lang)}`);
       refetch();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+    finally {
+      setRedeeming((prev) => { const next = new Set(prev); next.delete(c.id); return next; });
+    }
   };
 
   return (
@@ -63,7 +73,7 @@ export default function Loyalty() {
             { key: '_act', label: t('common.actions'), render: (_, r) => (
               <div className="row" style={{ gap: 6 }}>
                 <button className="btn btn--sm" onClick={() => openHistory(r)}><History size={13} /> {t('loyalty.history')}</button>
-                <button className="btn btn--sm btn--primary" onClick={() => redeem(r)} disabled={!r.loyaltyPoints}><Gift size={13} /> {t('loyalty.redeem')}</button>
+                <button className="btn btn--sm btn--primary" onClick={() => redeem(r)} disabled={!r.loyaltyPoints || redeeming.has(r.id)}><Gift size={13} /> {t('loyalty.redeem')}</button>
               </div>
             ) },
           ]}

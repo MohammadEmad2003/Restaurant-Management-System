@@ -40,6 +40,7 @@ export default function Complaints() {
     status: 'open', priority: 'normal', date: new Date().toISOString().split('T')[0],
   });
   const [form, setForm] = useState(blank());
+  const [saving, setSaving] = useState(false);
 
   // Arriving from an order (e.g. the "File Complaint" action on an order row)
   // pre-fills and opens the create form with that order already linked —
@@ -82,6 +83,10 @@ export default function Complaints() {
   };
 
   const submit = async () => {
+    // Guards against a double-click creating two identical complaint
+    // records for the same order/customer before the modal closes.
+    if (saving) return;
+    setSaving(true);
     try {
       if (editItem) await api.put(`/complaints/${editItem.id}`, form);
       else await api.post('/complaints', form);
@@ -89,6 +94,7 @@ export default function Complaints() {
       setShowModal(false);
       refetch();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+    finally { setSaving(false); }
   };
 
   const del = async (id) => {
@@ -160,7 +166,7 @@ export default function Complaints() {
           <Textarea label={t('complaints.description')} value={form.description} onChange={(v) => setField('description', v)} rows={4} />
           <div className="row" style={{ gap: 10, justifyContent: 'flex-end' }}>
             <Button color="ghost" onClick={() => setShowModal(false)}>{t('common.cancel')}</Button>
-            <Button onClick={submit}>{editItem ? t('common.save') : t('complaints.create')}</Button>
+            <Button onClick={submit} disabled={saving}>{editItem ? t('common.save') : t('complaints.create')}</Button>
           </div>
         </div>
       </Modal>

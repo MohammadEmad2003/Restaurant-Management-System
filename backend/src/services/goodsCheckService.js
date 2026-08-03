@@ -1,6 +1,7 @@
 import { repo } from '../repositories/index.js';
 import { HttpError } from '../middleware/errorHandler.js';
 import { shortCode } from '../utils/ids.js';
+import { withLock } from '../utils/lock.js';
 
 export const goodsCheckService = {
   list: (filter, user) => repo('goodsChecks').getAll({ ...filter, restaurantId: user?.restaurantId }),
@@ -14,6 +15,14 @@ export const goodsCheckService = {
     }
     const expectedQuantity = good.quantityAvailable;
     const actualQuantity = Number(data.actualQuantity);
+    // Without this, a blank/non-numeric physical-count entry (no
+    // validateBody schema covers this route) silently sets
+    // quantityAvailable to NaN — permanently breaking that item's low-stock
+    // alert (`NaN <= x` is always false), the same class of bug already
+    // fixed for goodsService.purchase() but left unfixed here.
+    if (!Number.isFinite(actualQuantity) || actualQuantity < 0) {
+      throw new HttpError(400, 'actualQuantity must be a non-negative number');
+    }
     const difference = +(expectedQuantity - actualQuantity).toFixed(3);
 
     const check = await repo('goodsChecks').create({
@@ -27,7 +36,12 @@ export const goodsCheckService = {
       date: data.date || new Date().toISOString().slice(0, 10),
       restaurantId: user?.restaurantId,
     });
-    await repo('goods').update(good.id, { quantityAvailable: actualQuantity });
+    // Locked and re-set from the value just counted (not adjusted from a
+    // re-read) — a physical count is an authoritative correction, but it
+    // must still be serialized against a concurrent order's deduction on
+    // the same good so neither write is silently lost (the same race
+    // already fixed for deductInventory, applied here too).
+    await withLock(`inventory-${good.id}`, () => repo('goods').update(good.id, { quantityAvailable: actualQuantity }));
     return check;
   },
 

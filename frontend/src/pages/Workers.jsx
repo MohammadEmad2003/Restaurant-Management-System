@@ -39,6 +39,7 @@ export default function Workers() {
   const [payOpen, setPayOpen] = useState(false);
   const [pvRows, setPvRows] = useState(null);
   const [edits, setEdits] = useState({}); // workerId → { bonus, deductions }
+  const [saving, setSaving] = useState(false);
   const [paying, setPaying] = useState(false);
   const [payingOne, setPayingOne] = useState(null); // workerId currently being paid individually
   const [detail, setDetail] = useState(null);
@@ -57,6 +58,10 @@ export default function Workers() {
   };
 
   const save = async () => {
+    // Guards against a double-click creating two workers with the same
+    // username/payload before the modal closes.
+    if (saving) return;
+    setSaving(true);
     try {
       const payload = { ...form, salary: Number(form.salary || 0) };
       if (editing) {
@@ -70,6 +75,7 @@ export default function Workers() {
       setOpen(false); setForm(blank); setEditing(null);
       refetch();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+    finally { setSaving(false); }
   };
 
   const disable = async (id) => {
@@ -227,7 +233,7 @@ export default function Workers() {
       </Card>
 
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? t('workers.edit', 'Edit Worker') : t('workers.new', 'New Worker')}
-        footer={<><button className="btn" onClick={() => setOpen(false)}>{t('common.cancel')}</button><button className="btn btn--primary" onClick={save}>{t('common.save')}</button></>}>
+        footer={<><button className="btn" onClick={() => setOpen(false)}>{t('common.cancel')}</button><button className="btn btn--primary" disabled={saving} onClick={save}>{t('common.save')}</button></>}>
         {editing?.appUserId && (
           <div className="badge badge--info" style={{ marginBottom: 12, display: 'block' }}>
             {t('workers.linkedAccountNote', 'This is a Cashier account created by the Super Admin — username, password, and role are managed there. Only employee details below can be edited here.')}

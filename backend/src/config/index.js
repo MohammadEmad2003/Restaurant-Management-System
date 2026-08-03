@@ -28,10 +28,12 @@ export const config = {
     probeTimeoutMs: Number(process.env.SYNC_PROBE_TIMEOUT_MS) || 3000,
     readTimeoutMs: Number(process.env.SYNC_READ_TIMEOUT_MS) || 4000,
     // After dropping offline, re-probe this often until back online — kept
-    // short so the app snaps back to Supabase almost the instant internet
-    // genuinely returns, rather than sitting in local-only mode for a
-    // noticeable stretch after connectivity is actually restored.
-    offlineRetryMs: Number(process.env.SYNC_OFFLINE_RETRY_MS) || 1500,
+    // very short so the app forces itself back onto Supabase the moment
+    // internet genuinely returns, instead of sitting in local-only mode for
+    // any noticeable stretch after connectivity is actually restored. A
+    // single "select 1" probe is cheap enough that polling this often costs
+    // nothing while genuinely offline (it just fails fast and reschedules).
+    offlineRetryMs: Number(process.env.SYNC_OFFLINE_RETRY_MS) || 500,
   },
 
   // Absolute path to the local JSON store directory. Overridable (e.g. by

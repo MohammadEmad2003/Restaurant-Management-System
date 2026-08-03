@@ -44,7 +44,15 @@ class SyncEngine {
 
   _resolve(local, remote) {
     if (!remote) return local;
-    if (local._sync?.deleted) return local; // delete wins
+    if (local._sync?.deleted) return local; // local delete wins
+    // A remote tombstone must win too, not just a local one — otherwise
+    // field-merge's `{...remote, ...local}` spread overwrites remote's
+    // `deleted:true` with local's (false/undefined), resurrecting a
+    // hard-deleted record: device A deletes a client (tombstoned on
+    // Supabase), device B — still holding an older, unsynced edit from
+    // before the delete — comes back online and this spread would silently
+    // un-delete it system-wide.
+    if (remote._sync?.deleted) return remote;
     if (config.sync.conflictPolicy === 'field-merge') {
       return {
         ...remote,

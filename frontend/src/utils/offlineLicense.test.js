@@ -122,6 +122,25 @@ describe('evaluateOfflineAccess — tiered offline-access policy', () => {
     expect(result.tier).toBe('blocked');
   });
 
+  it('is NOT fooled by editing the OUTER unsigned validatedAt/offlineExpiration/validationIntervalHours — only the signed payload is trusted (bug regression)', async () => {
+    const license = makeLicense({
+      validatedAt: Date.now() - 100 * HOUR, // long stale per the SIGNED payload
+      validationIntervalHours: 1,
+      offlineExpiration: Date.now() - 1 * HOUR, // already expired per the SIGNED payload
+    });
+    // Simulate a tampered localStorage blob: outer convenience copies edited
+    // to look freshly-validated with a far-future grace period, inner signed
+    // `payload` string (what the signature actually covers) left untouched.
+    const spoofed = {
+      ...license,
+      validatedAt: new Date().toISOString(),
+      offlineExpiration: new Date(Date.now() + 365 * 24 * HOUR).toISOString(),
+      validationIntervalHours: 24 * 365,
+    };
+    const result = await evaluateOfflineAccess(spoofed, DEVICE_A);
+    expect(result.tier).toBe('expired');
+  });
+
   it('returns "stale" once the validation interval has lapsed but the offline grace period has not', async () => {
     const license = makeLicense({
       validatedAt: Date.now() - 30 * HOUR,

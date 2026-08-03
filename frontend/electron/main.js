@@ -3,16 +3,49 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { fork } from 'node:child_process';
 import http from 'node:http';
+import net from 'node:net';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
 const BACKEND_PORT = Number(process.env.PORT) || 4000;
 
 let backendProcess = null;
+// Last handful of lines the embedded backend printed before either becoming
+// ready or dying — `stdio: 'inherit'` alone gives a user who launched via
+// double-click (no attached terminal) zero visibility into why a generic
+// "did not become ready" dialog happened; this makes the real reason (a
+// crash, a missing dependency, a port conflict) show up IN the dialog itself.
+const recentBackendOutput = [];
+function recordBackendOutput(chunk) {
+  const text = chunk.toString();
+  process.stdout.write(text); // still visible in a terminal, if one is attached
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    recentBackendOutput.push(line);
+    if (recentBackendOutput.length > 20) recentBackendOutput.shift();
+  }
+}
+
+/** True if something is already listening on this port — almost always a
+ * previous instance of this same app that didn't shut down cleanly (a
+ * force-quit, a crash, or simply a second copy already running), the single
+ * most common real-world reason "backend did not become ready" happens,
+ * exactly like the plain "npm run dev" backend already detects and reports
+ * clearly for itself in dev (see backend/src/server.js's EADDRINUSE handler)
+ * — this gives the packaged app the same clarity instead of a generic
+ * timeout with no indication of the actual cause. */
+function isPortTaken(port) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host: '127.0.0.1', port, timeout: 800 });
+    socket.on('connect', () => { socket.destroy(); resolve(true); });
+    socket.on('timeout', () => { socket.destroy(); resolve(false); });
+    socket.on('error', () => resolve(false));
+  });
+}
 
 /** Poll the backend's own health endpoint until it responds, so the window
  * is never shown before the API it depends on can actually serve requests. */
-function waitForBackend(port, timeoutMs = 20000) {
+function waitForBackend(port, timeoutMs = 45000) {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
     const attempt = () => {
@@ -25,7 +58,14 @@ function waitForBackend(port, timeoutMs = 20000) {
       req.on('timeout', () => { req.destroy(); retry(); });
     };
     const retry = () => {
-      if (Date.now() - startedAt > timeoutMs) return reject(new Error(`Backend on port ${port} did not become ready in time`));
+      // The backend process exiting is a hard failure — no amount of extra
+      // waiting will ever make a dead process start answering requests.
+      if (backendProcess === null) {
+        return reject(new Error(`Backend exited before it became ready.${recentBackendOutput.length ? `\n\n${recentBackendOutput.join('\n')}` : ''}`));
+      }
+      if (Date.now() - startedAt > timeoutMs) {
+        return reject(new Error(`Backend on port ${port} did not become ready in time.${recentBackendOutput.length ? `\n\n${recentBackendOutput.join('\n')}` : ''}`));
+      }
       setTimeout(attempt, 300);
     };
     attempt();
@@ -52,8 +92,20 @@ function waitForBackend(port, timeoutMs = 20000) {
  * nothing is spawned here, matching how `loadURL` already points at the
  * separately-running Vite dev server below.
  */
-function startBackend() {
-  if (isDev) return Promise.resolve();
+async function startBackend() {
+  if (isDev) return;
+
+  // By far the most common real-world reason the backend "never becomes
+  // ready" is a previous instance of this same app still holding the port —
+  // a force-quit, a crash, or simply launching a second copy while the first
+  // is still running. Check for it explicitly up front so that case gets a
+  // clear, specific message instead of a generic 45-second timeout.
+  if (await isPortTaken(BACKEND_PORT)) {
+    throw new Error(
+      `Port ${BACKEND_PORT} is already in use — another copy of this app (or something else) is already running.\n`
+      + `Close it first, then relaunch. If nothing visible is running, check for a leftover background process using this port.`,
+    );
+  }
 
   const backendEntry = path.join(process.resourcesPath, 'backend', 'src', 'server.js');
   const dataDir = path.join(app.getPath('userData'), 'backend-data');
@@ -65,8 +117,13 @@ function startBackend() {
       DATA_DIR: dataDir,
       NODE_ENV: 'production',
     },
-    stdio: 'inherit',
+    // 'pipe' (not 'inherit') so output can be captured for the error dialog
+    // below — a double-click launch has no attached terminal for 'inherit'
+    // to usefully show anything on anyway.
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
+  backendProcess.stdout.on('data', recordBackendOutput);
+  backendProcess.stderr.on('data', recordBackendOutput);
   backendProcess.on('exit', (code, signal) => {
     if (code !== 0 && code !== null) {
       console.error(`Backend process exited unexpectedly (code=${code}, signal=${signal})`);

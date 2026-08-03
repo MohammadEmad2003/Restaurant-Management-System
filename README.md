@@ -5,9 +5,10 @@ A complete, **offline-first** restaurant management platform.
 
 > **Runs immediately with mock data — no Supabase needed.** The backend boots on a local JSON store seeded with realistic data. Add your Supabase `DATABASE_URL` to `backend/.env` whenever you're ready and the sync engine pushes everything to Postgres automatically.
 
-📐 The complete architecture & specification lives in **[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)**.
-🚀 A performance investigation & refactor (startup time, write latency, bundle size) is written up in **[REFACTOR_PLAN.md](REFACTOR_PLAN.md)**.
+📐 The complete, up-to-date architecture & reference lives in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — read this for the real system (multi-tenant licensing, device-bound auth, API endpoints, deployment, troubleshooting).
 🧭 A guided walkthrough of how the system actually fits together (storage model, roles, licensing, delivery payments, cash ledger) is in **[architecture-report.html](architecture-report.html)** — open it in a browser.
+
+> `docs/IMPLEMENTATION_PLAN.md` is an early planning draft (Firestore, branches, no licensing) that predates the real architecture and does not reflect the current codebase — kept only for historical context.
 
 ---
 
@@ -38,7 +39,9 @@ A complete, **offline-first** restaurant management platform.
 ```bash
 cd backend
 npm install         # puppeteer's Chromium download is skipped (see backend/.npmrc) — fast install
-npm start           # → http://localhost:4000  (auto-seeds mock data on first run)
+npm start           # → http://localhost:4000  (auto-creates a Super Admin + a bootstrap
+                    #    restaurant with working admin/admin123 + cashier/cashier123 logins
+                    #    on first run — see docs/ARCHITECTURE.md §12 for details)
 ```
 
 ### 2) Frontend (terminal 2)
@@ -108,8 +111,7 @@ Restart the backend. The **Sync Status** page shows it go **Online** and flush p
 
 ```
 Restaurant/
-├── IMPLEMENTATION_PLAN.md        # full architecture & spec (read this!)
-├── REFACTOR_PLAN.md              # performance investigation & fixes (read this too)
+├── docs/ARCHITECTURE.md          # full architecture & reference (read this!)
 ├── backend/                      # Node.js + Express API
 │   ├── src/
 │   │   ├── config/  models/  repositories/  (local JSON + Supabase)
@@ -165,8 +167,8 @@ background. A few things matter for keeping it fast as data grows:
   chunks — the initial bundle no longer ships all 25 pages and the charting
   library up front.
 
-See **[REFACTOR_PLAN.md](REFACTOR_PLAN.md)** for the full investigation, before/after
-numbers, and follow-ups.
+See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full architecture reference,
+including deployment, environment variables, and troubleshooting.
 
 > **Moving this project between machines/OSes?** `node_modules` bakes in
 > platform-specific native binaries. Reinstall (`rm -rf node_modules && npm install`)
@@ -174,6 +176,7 @@ numbers, and follow-ups.
 > a Linux-built `node_modules` will not run Vite/esbuild on Windows (or vice versa).
 
 ---
+
 
 ## 📜 License
 Provided as a starter/reference implementation. Use freely for your restaurant.

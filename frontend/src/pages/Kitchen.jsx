@@ -15,6 +15,7 @@ export default function Kitchen() {
   const lang = useUI((s) => s.lang);
   const [tickets, setTickets] = useState([]);
   const [, setTick] = useState(0);
+  const [advancing, setAdvancing] = useState(() => new Set());
 
   const load = () => api.get('/kds/tickets').then((r) => setTickets(r.data)).catch(() => {});
   useEffect(() => {
@@ -25,9 +26,17 @@ export default function Kitchen() {
   }, []);
 
   const advance = async (ticket) => {
-    const next = NEXT[ticket.status];
-    await api.patch(`/kds/tickets/${ticket.id}/status`, { status: next });
-    load();
+    // Guards against a double-tap on a touchscreen (the realistic KDS input
+    // device) sending the same status transition twice in quick succession.
+    if (advancing.has(ticket.id)) return;
+    setAdvancing((prev) => new Set(prev).add(ticket.id));
+    try {
+      const next = NEXT[ticket.status];
+      await api.patch(`/kds/tickets/${ticket.id}/status`, { status: next });
+      load();
+    } finally {
+      setAdvancing((prev) => { const next = new Set(prev); next.delete(ticket.id); return next; });
+    }
   };
 
   return (
@@ -63,7 +72,7 @@ export default function Kitchen() {
                       <Clock size={14} /> {mmss(ticket.elapsedSeconds)}
                     </span>
                     {NEXT[ticket.status] && (
-                      <button className="btn btn--sm btn--primary" onClick={() => advance(ticket)}>
+                      <button className="btn btn--sm btn--primary" disabled={advancing.has(ticket.id)} onClick={() => advance(ticket)}>
                         <CheckCircle2 size={14} /> {ACTION_LABEL[ticket.status]}
                       </button>
                     )}

@@ -41,12 +41,17 @@ export default function GoodsCheck() {
   }, [reasonFilter, dateFrom, dateTo]);
 
   const [waste, setWaste] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   const submit = async () => {
     if (form.reason === OTHER_REASON && !form.customReason.trim()) {
       notify(t('goodsCheck.customReasonRequired', 'Type a reason, or pick one of the options instead'), 'error');
       return;
     }
+    // A physical count directly adjusts real stock — a double-click firing
+    // this twice would silently over-correct inventory quantities.
+    if (saving) return;
+    setSaving(true);
     try {
       const reason = form.reason === OTHER_REASON ? form.customReason.trim() : form.reason;
       await api.post('/goods-checks', { ...form, reason, actualQuantity: Number(form.actualQuantity), date: new Date().toISOString().slice(0, 10) });
@@ -58,6 +63,7 @@ export default function GoodsCheck() {
       });
       refetch(); fetchWaste();
     } catch (e) { notify(e.response?.data?.error || t('common.failed', 'Failed'), 'error'); }
+    finally { setSaving(false); }
   };
 
   useEffect(() => { fetchWaste(); }, [fetchWaste]);
@@ -124,7 +130,7 @@ export default function GoodsCheck() {
       </div>
 
       <Modal open={open} onClose={() => setOpen(false)} title={t('goodsCheck.physicalInventoryCount', 'Physical Inventory Count')}
-        footer={<><button className="btn" onClick={() => setOpen(false)}>{t('common.cancel')}</button><button className="btn btn--primary" onClick={submit}>{t('common.save')}</button></>}>
+        footer={<><button className="btn" onClick={() => setOpen(false)}>{t('common.cancel')}</button><button className="btn btn--primary" disabled={saving} onClick={submit}>{t('common.save')}</button></>}>
         <div className="field"><label>{t('goodsCheck.item', 'Item')}</label>
           <select className="select" value={form.goodId} onChange={(e) => setForm({ ...form, goodId: e.target.value })}>
             <option value="">{t('common.selectCategory', 'Select…')}</option>

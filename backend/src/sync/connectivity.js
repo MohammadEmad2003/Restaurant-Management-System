@@ -2,6 +2,7 @@ import { config, isSupabaseConfigured } from '../config/index.js';
 import { getDb } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { withTimeout } from '../utils/withTimeout.js';
+import { noteTrustedRemoteTime } from '../utils/trustedTime.js';
 
 /**
  * Tracks whether we can reach Supabase. Drives the failover between the
@@ -35,12 +36,19 @@ class Connectivity {
     try {
       const db = await getDb();
       if (!db) return this._set(false);
-      // Lightweight reachability probe, bounded so a dropped connection fails fast.
-      await withTimeout(
-        db.query('select 1'),
+      // Also pulls Postgres's own clock — a timestamp the user does not
+      // control, unlike this machine's own OS clock — so a genuinely online
+      // moment can authoritatively advance the trusted-time high-water mark
+      // (see utils/trustedTime.js) past a clock that was rolled back while
+      // offline. Reachability is still bounded so a dropped connection fails
+      // fast either way.
+      const { rows } = await withTimeout(
+        db.query('select extract(epoch from now()) * 1000 as ms'),
         config.sync.probeTimeoutMs,
         'connectivity probe',
       );
+      const remoteMs = Number(rows?.[0]?.ms);
+      if (Number.isFinite(remoteMs)) noteTrustedRemoteTime(remoteMs);
       return this._set(true);
     } catch {
       return this._set(false);

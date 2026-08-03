@@ -62,7 +62,15 @@ async function maybeStartNewDay(restaurantId) {
  * number twice.
  */
 async function nextOrderNumber(restaurantId, isDeliveryCollection) {
-  return withLock(`order-number-${restaurantId}`, async () => {
+  // Must use the SAME lock key as maybeStartNewDay — both read-modify-write
+  // the same businessDays row, and orders can be created with no open shift
+  // at all (by design), so a day-rollover and an order-number mint can
+  // otherwise interleave: nextOrderNumber reads takeawaySeq under its own
+  // lock, maybeStartNewDay (under a DIFFERENT lock) resets it to 0, then
+  // nextOrderNumber writes back its stale incremented value — reviving the
+  // pre-reset sequence and producing an inflated order number right after
+  // what should have been a fresh day starting at 001.
+  return withLock(`business-day-${restaurantId}`, async () => {
     const day = await getOrInit(restaurantId);
     const field = isDeliveryCollection ? 'deliverySeq' : 'takeawaySeq';
     const next = (day[field] || 0) + 1;

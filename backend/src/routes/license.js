@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { auth, requireDeviceBound } from '../middleware/auth.js';
 import { rbac } from '../middleware/rbac.js';
+import { authRateLimit } from '../middleware/rateLimit.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { authService } from '../services/authService.js';
 import { licenseService } from '../services/licenseService.js';
@@ -17,7 +18,11 @@ router.get('/public-key', (req, res) => {
   res.json({ publicKey: getPublicKeySpkiBase64(), algorithm: 'ECDSA-P256-SHA256' });
 });
 
-router.post('/activate', h(async (req, res) => {
+// Same protection as /auth/login and /auth/login/superadmin — without it,
+// an attacker who knows/guesses a restaurant admin's username could hammer
+// this route with unlimited attempts to brute-force the password and/or the
+// activation token, with no lockout or throttling at all.
+router.post('/activate', authRateLimit(), h(async (req, res) => {
   const { username, password, token, deviceName, operatingSystem } = req.body;
   const fingerprint = req.headers['x-device-fingerprint'] || req.body.fingerprint || buildFingerprint(req);
   const result = await authService.activateRestaurantLicense({

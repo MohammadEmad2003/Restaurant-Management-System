@@ -3,6 +3,7 @@ import { encrypt, decrypt } from '../utils/crypto.js';
 import { newId, shortCode } from '../utils/ids.js';
 import { HttpError } from '../middleware/errorHandler.js';
 import { logger } from '../utils/logger.js';
+import { getTrustedNow } from '../utils/trustedTime.js';
 
 const store = secureStore();
 
@@ -22,9 +23,13 @@ function requireFiniteNumber(value, min, label) {
 }
 
 // Note: JWT lifetime is a global setting (config.jwtExpiresInHours), not
-// per-restaurant — it intentionally has no entry here.
+// per-restaurant — it intentionally has no entry here. Session timeout and
+// validation interval are no longer independently configurable from the
+// Super Admin UI (removed per product decision) — they still exist as
+// stored fields (the idle-session sweep and the offline-license rolling-
+// validation tier both still read them) but always use these fixed
+// defaults now, for every restaurant.
 const DEFAULTS = {
-  offlineDays: 7,
   maximumDevices: 2,
   validationIntervalHours: 24,
   licenseDays: 30,
@@ -51,16 +56,20 @@ export const FOREVER_DATE = '9999-12-31T23:59:59.999Z';
 export const licenseService = {
   async createLicense(restaurantId, overrides = {}) {
     const token = generateActivationToken();
+    const days = overrides.days || DEFAULTS.licenseDays;
     const license = await store.create('licenses', {
       restaurantId,
       activationTokenEncrypted: encrypt(token),
-      expirationDate: overrides.expirationDate || licenseExpirationDate(overrides.days || DEFAULTS.licenseDays),
-      offlineDays: overrides.offlineDays ?? DEFAULTS.offlineDays,
+      expirationDate: overrides.expirationDate || licenseExpirationDate(days),
+      // Offline access is merged with the license's own duration — a
+      // device may work offline for as long as the license itself is
+      // valid for, not a separately-configured shorter/longer window.
+      offlineDays: days,
       maximumDevices: overrides.maximumDevices ?? DEFAULTS.maximumDevices,
       activeDevices: 0,
-      validationIntervalHours: overrides.validationIntervalHours ?? DEFAULTS.validationIntervalHours,
+      validationIntervalHours: DEFAULTS.validationIntervalHours,
       maxConcurrentCashierSessions: overrides.maxConcurrentCashierSessions ?? DEFAULTS.maxConcurrentCashierSessions,
-      sessionTimeoutMinutes: overrides.sessionTimeoutMinutes ?? DEFAULTS.sessionTimeoutMinutes,
+      sessionTimeoutMinutes: DEFAULTS.sessionTimeoutMinutes,
       status: 'inactive',
     });
     return { license, token };
@@ -116,6 +125,7 @@ export const licenseService = {
     const expirationDate = licenseExpirationDate(days);
     const updated = await store.update('licenses', license.id, {
       expirationDate,
+      offlineDays: days, // kept merged with the license's own duration, same as at creation
       status: 'active',
     });
     return { license: updated, expirationDate };
@@ -161,22 +171,10 @@ export const licenseService = {
     return store.update('licenses', license.id, { status: 'revoked' });
   },
 
-  async changeOfflineDays(restaurantId, days) {
-    const n = requireFiniteNumber(days, 0, 'Offline days');
-    const license = await this.requireLicense(restaurantId);
-    return store.update('licenses', license.id, { offlineDays: n });
-  },
-
   async changeMaximumDevices(restaurantId, count) {
     const n = requireFiniteNumber(count, 1, 'Maximum devices');
     const license = await this.requireLicense(restaurantId);
     return store.update('licenses', license.id, { maximumDevices: n });
-  },
-
-  async changeValidationInterval(restaurantId, hours) {
-    const n = requireFiniteNumber(hours, 1, 'Validation interval');
-    const license = await this.requireLicense(restaurantId);
-    return store.update('licenses', license.id, { validationIntervalHours: n });
   },
 
   async changeMaxConcurrentCashierSessions(restaurantId, count) {
@@ -185,18 +183,15 @@ export const licenseService = {
     return store.update('licenses', license.id, { maxConcurrentCashierSessions: n });
   },
 
-  async changeSessionTimeoutMinutes(restaurantId, minutes) {
-    const n = requireFiniteNumber(minutes, 1, 'Session timeout');
-    const license = await this.requireLicense(restaurantId);
-    return store.update('licenses', license.id, { sessionTimeoutMinutes: n });
-  },
-
   async validateLicense(restaurantId) {
     const license = await this.getLicenseByRestaurant(restaurantId);
     if (!license) throw new HttpError(403, 'Your restaurant subscription has expired. Please contact your administrator.');
     if (license.status === 'revoked') throw new HttpError(403, 'Your restaurant subscription has expired. Please contact your administrator.');
     if (license.status === 'suspended') throw new HttpError(403, 'Your restaurant subscription has expired. Please contact your administrator.');
-    if (license.status === 'expired' || new Date(license.expirationDate) < new Date()) {
+    // getTrustedNow() (not `new Date()`) — this backend runs on the same
+    // machine as the user, so a plain clock comparison is trivially defeated
+    // by winding the OS date backward. See utils/trustedTime.js.
+    if (license.status === 'expired' || new Date(license.expirationDate).getTime() < getTrustedNow()) {
       await store.update('licenses', license.id, { status: 'expired' });
       throw new HttpError(403, 'Your restaurant subscription has expired. Please contact your administrator.');
     }

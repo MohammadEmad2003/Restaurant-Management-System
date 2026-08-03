@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { authService } from './authService.js';
 import { superAdminService } from './superAdminService.js';
+import { deviceService } from './deviceService.js';
 import { createTestRestaurant, createCashier, store } from '../test-helpers/fixtures.js';
 
 const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36';
@@ -24,6 +25,35 @@ test('login succeeds with correct credentials on an activated license', async ()
   });
   assert.ok(result.token);
   assert.equal(result.user.username, admin.username);
+});
+
+// Regression: loginRestaurantUser used to re-assemble the returned `device`
+// object from a plain deviceService.updateValidationTimestamp() read (added
+// for the monthly-online-validation feature), which never carries
+// `plainDeviceSecret` — an in-memory-only field that _issueSecret() attaches,
+// never persisted. That silently returned deviceSecret: null on every login,
+// including a genuinely brand-new device that should receive one — leaving
+// the client with no secret to send on every subsequent request, which
+// requireDeviceBound then rejects outright. Login itself "succeeded" (a
+// token came back), but the app was completely unusable immediately after.
+test('login returns a usable deviceSecret for a brand-new device, and that exact secret validates against the stored device', async () => {
+  const { admin, activationToken } = await createTestRestaurant();
+  await authService.activateRestaurantLicense({
+    username: admin.username,
+    password: 'admin12345',
+    token: activationToken,
+    fingerprint: 'fp-device-secret-regress',
+    userAgent: DESKTOP_UA,
+  });
+  const result = await authService.loginRestaurantUser({
+    username: admin.username,
+    password: 'admin12345',
+    fingerprint: 'fp-device-secret-regress',
+    userAgent: DESKTOP_UA,
+  });
+  assert.ok(result.deviceSecret, 'a brand-new device must receive a usable plaintext secret on login, not null');
+  const storedDevice = await deviceService.getDevice(result.device.id);
+  assert.equal(deviceService.validateDeviceSecret(storedDevice, result.deviceSecret), true, 'the returned secret must actually validate against what was persisted');
 });
 
 test('login rejects invalid password', async () => {

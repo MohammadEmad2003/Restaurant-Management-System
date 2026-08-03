@@ -6,6 +6,50 @@ import { logger } from '../utils/logger.js';
 const DEFAULT_SUPER_ADMIN = { username: 'superadmin', password: 'superadmin123' };
 const DEFAULT_RESTAURANT = { name: 'Default Restaurant' };
 
+/**
+ * Ensures a restaurant has at least one login-capable account. Previously
+ * this migration created the bootstrap restaurant + an (inactive) license
+ * but ZERO `users` rows — meaning the demo credentials (admin/admin123,
+ * cashier/cashier123) pre-filled and advertised right on the Login screen
+ * could never actually log in on a fresh install; the "workers" entries
+ * seeded by the separate, opt-in `npm run seed` mock dataset don't count
+ * either, since a Worker record is deliberately never login-capable (see
+ * the note in runMigrations below) — only a real `users` row is.
+ *
+ * Exported on its own (rather than inlined in runMigrations) so it can be
+ * tested directly against a restaurant built in isolation, without depending
+ * on runMigrations' own ambient "whichever restaurant happens to be first"
+ * bootstrap-restaurant selection — which, in a shared test datastore where
+ * other fixtures may have already created restaurants with their own admins,
+ * is not a restaurant this logic would ever touch (it already has users).
+ */
+export async function ensureDefaultAccounts(restaurantId) {
+  const store = secureStore();
+  const existingUsers = await store.findAll('users', { restaurantId });
+  if (existingUsers.length) return false;
+  const { superAdminService } = await import('../services/superAdminService.js');
+  // Usernames are globally unique across every restaurant in this app (see
+  // superAdminService.assertUsernameAvailable) — on a real, already-used
+  // database (not a fresh install), literally 'admin'/'cashier' may already
+  // belong to some OTHER restaurant from earlier real-world use. That must
+  // never be allowed to crash server boot entirely (this is a convenience
+  // bootstrap, not essential functionality) — log and move on instead.
+  let createdAny = false;
+  for (const account of [
+    { username: 'admin', password: 'admin123', role: 'ADMIN' },
+    { username: 'cashier', password: 'cashier123', role: 'CASHIER' },
+  ]) {
+    try {
+      await superAdminService.createRestaurantUser(restaurantId, account);
+      createdAny = true;
+    } catch (err) {
+      logger.warn(`Skipped creating default '${account.username}' account for the bootstrap restaurant: ${err.message}`);
+    }
+  }
+  if (createdAny) logger.success('Created default login account(s) for the bootstrap restaurant.');
+  return createdAny;
+}
+
 export async function runMigrations() {
   await initSecureStore();
   const store = secureStore();
@@ -40,8 +84,18 @@ export async function runMigrations() {
   if (!license) {
     const { licenseService } = await import('../services/licenseService.js');
     await licenseService.createLicense(restaurant.id, { maximumDevices: 10 });
+    // A fresh createLicense() starts 'inactive', requiring an activation
+    // token before any ADMIN can get a real session — but this restaurant
+    // only exists as an out-of-the-box demo/sandbox, with no super-admin-
+    // issued token anyone would ever have. Activate it immediately so the
+    // demo credentials created below actually work on the very first boot,
+    // with no extra manual step.
+    await licenseService.setLicenseForever(restaurant.id);
     logger.success('Created default license for default restaurant');
   }
+
+  await ensureDefaultAccounts(restaurant.id);
+
 
   // Stamp restaurant_id on all existing business records if missing.
   const collections = [

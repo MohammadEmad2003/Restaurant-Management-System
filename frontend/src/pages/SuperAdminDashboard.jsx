@@ -158,6 +158,39 @@ export default function SuperAdminDashboard() {
     } catch (e) { notify('Failed to load sessions', 'danger'); }
   };
 
+  const revokeLicense = async (lic) => {
+    const ok = await confirm({
+      title: 'Revoke license?',
+      message: 'Revoke this license? Every user at this restaurant is immediately blocked from logging in, online or offline, until a new license is issued.',
+      confirmLabel: 'Revoke',
+      danger: true,
+    });
+    if (!ok) return;
+    await action('patch', `/superadmin/licenses/${lic.restaurantId}/revoke`, 'Revoked');
+  };
+
+  const forceLogoutCashiers = async (restaurantId) => {
+    const ok = await confirm({
+      title: 'Force logout all cashiers?',
+      message: 'Immediately log out every active cashier session at this restaurant? Anyone mid-shift will be signed out right away.',
+      confirmLabel: 'Force Logout',
+      danger: true,
+    });
+    if (!ok) return;
+    await action('post', `/superadmin/restaurants/${restaurantId}/force-logout-cashiers`, 'All cashiers logged out');
+  };
+
+  const terminateSession = async (s) => {
+    const ok = await confirm({
+      title: 'Terminate session?',
+      message: `Immediately end this ${s.userType}${s.role ? ` (${s.role})` : ''} session? The device will be signed out on its next request.`,
+      confirmLabel: 'Terminate',
+      danger: true,
+    });
+    if (!ok) return;
+    await action('patch', `/superadmin/sessions/${s.id}/terminate`, 'Session terminated');
+  };
+
   const action = async (method, path, success, body) => {
     try {
       if (method === 'get' || body === undefined) await api[method](path);
@@ -299,17 +332,12 @@ export default function SuperAdminDashboard() {
                       <button className="btn btn--sm" onClick={() => action('post', `/superadmin/licenses/${lic.restaurantId}/regenerate-token`, 'Token regenerated')}>Regenerate</button>
                       <button className="btn btn--sm" onClick={() => action('post', `/superadmin/licenses/${lic.restaurantId}/renew`, 'Renewed')}>Renew</button>
                       <button className="btn btn--sm" onClick={() => action('post', `/superadmin/licenses/${lic.restaurantId}/set-forever`, 'License set to never expire')}>Never Expire</button>
-                      <button className="btn btn--danger btn--sm" onClick={() => action('patch', `/superadmin/licenses/${lic.restaurantId}/revoke`, 'Revoked')}>Revoke</button>
+                      <button className="btn btn--danger btn--sm" onClick={() => revokeLicense(lic)}>Revoke</button>
                     </div>
                     <CashierSessionSettings
                       key={lic.id}
                       lic={lic}
                       onSaveMax={(count) => action('patch', `/superadmin/licenses/${lic.restaurantId}/max-concurrent-cashiers`, 'Max cashier sessions updated', { count })}
-                    />
-                    <ValidationSettings
-                      key={`${lic.id}-validation`}
-                      lic={lic}
-                      onSaveOffline={(days) => action('patch', `/superadmin/licenses/${lic.restaurantId}/offline-days`, 'Offline access lease updated', { days })}
                     />
                   </div>
                 );
@@ -348,7 +376,7 @@ export default function SuperAdminDashboard() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                 <h2 style={{ fontSize: 20, fontWeight: 800 }}>Sessions</h2>
                 {data.sessionsRestaurantId && (
-                  <button className="btn btn--danger btn--sm" onClick={() => action('post', `/superadmin/restaurants/${data.sessionsRestaurantId}/force-logout-cashiers`, 'All cashiers logged out')}>Force Logout All Cashiers</button>
+                  <button className="btn btn--danger btn--sm" onClick={() => forceLogoutCashiers(data.sessionsRestaurantId)}>Force Logout All Cashiers</button>
                 )}
               </div>
               <div className="field" style={{ maxWidth: 360, marginBottom: 16 }}>
@@ -365,7 +393,7 @@ export default function SuperAdminDashboard() {
                       <div style={{ fontWeight: 600, fontSize: 14 }}>{s.userType}{s.role ? ` · ${s.role}` : ''}</div>
                       <div className="muted" style={{ fontSize: 12 }}>{new Date(s.loginTime).toLocaleString()} · {s.status}</div>
                     </div>
-                    <button className="btn btn--danger btn--sm" onClick={() => action('patch', `/superadmin/sessions/${s.id}/terminate`, 'Session terminated')}>Terminate</button>
+                    <button className="btn btn--danger btn--sm" onClick={() => terminateSession(s)}>Terminate</button>
                   </div>
                 ))
               ) : (
@@ -428,10 +456,7 @@ function CreateRestaurantForm({ onClose, onCreate }) {
     adminPassword: 'admin123',
     licenseDays: 30,
     maxDevices: 2,
-    offlineDays: 7,
-    validationIntervalHours: 24,
     maxConcurrentCashierSessions: 1,
-    sessionTimeoutMinutes: 30,
   });
   const [submitting, setSubmitting] = useState(false);
 
@@ -445,10 +470,11 @@ function CreateRestaurantForm({ onClose, onCreate }) {
       license: {
         days: form.licenseDays,
         maximumDevices: form.maxDevices,
-        offlineDays: form.offlineDays,
-        validationIntervalHours: form.validationIntervalHours,
         maxConcurrentCashierSessions: form.maxConcurrentCashierSessions,
-        sessionTimeoutMinutes: form.sessionTimeoutMinutes,
+        // Offline access is merged with License Days on the backend — no
+        // separate field to send. Session Timeout and Validation Interval
+        // are no longer configurable here; the backend always uses its
+        // fixed defaults for both.
       },
     }); } finally { setSubmitting(false); }
   };
@@ -459,11 +485,9 @@ function CreateRestaurantForm({ onClose, onCreate }) {
       <div className="field"><label>Admin Username</label><input className="input" value={form.adminUsername} onChange={(e) => setForm({ ...form, adminUsername: e.target.value })} /></div>
       <div className="field"><label>Admin Password</label><input className="input" value={form.adminPassword} onChange={(e) => setForm({ ...form, adminPassword: e.target.value })} /></div>
       <div className="field"><label>License Days</label><input className="input" type="number" min={1} value={form.licenseDays} onChange={(e) => setForm({ ...form, licenseDays: Number(e.target.value) })} /></div>
+      <p className="muted" style={{ fontSize: 11.5, marginTop: -8, marginBottom: 14 }}>Offline access is granted for the same number of days as the license itself.</p>
       <div className="field"><label>Max Devices</label><input className="input" type="number" min={1} value={form.maxDevices} onChange={(e) => setForm({ ...form, maxDevices: Number(e.target.value) })} /></div>
-      <div className="field"><label>Offline Days</label><input className="input" type="number" min={1} value={form.offlineDays} onChange={(e) => setForm({ ...form, offlineDays: Number(e.target.value) })} /></div>
-      <div className="field"><label>Validation Interval (hours)</label><input className="input" type="number" min={1} value={form.validationIntervalHours} onChange={(e) => setForm({ ...form, validationIntervalHours: Number(e.target.value) })} /></div>
       <div className="field"><label>Max Concurrent Cashier Sessions</label><input className="input" type="number" min={1} value={form.maxConcurrentCashierSessions} onChange={(e) => setForm({ ...form, maxConcurrentCashierSessions: Number(e.target.value) })} /></div>
-      <div className="field"><label>Session Timeout (minutes)</label><input className="input" type="number" min={1} value={form.sessionTimeoutMinutes} onChange={(e) => setForm({ ...form, sessionTimeoutMinutes: Number(e.target.value) })} /></div>
       <div className="row" style={{ gap: 10, justifyContent: 'flex-end', marginTop: 20 }}>
         <button className="btn btn--ghost" onClick={onClose}>Cancel</button>
         <button className="btn btn--primary" disabled={submitting} onClick={submit}>Create</button>
@@ -482,25 +506,6 @@ function CashierSessionSettings({ lic, onSaveMax }) {
         <input className="input" type="number" min={1} value={maxSessions} onChange={(e) => setMaxSessions(Number(e.target.value))} style={{ width: 100 }} />
       </div>
       <button className="btn btn--sm" onClick={() => onSaveMax(maxSessions)}>Save</button>
-    </div>
-  );
-}
-
-function ValidationSettings({ lic, onSaveOffline }) {
-  const [days, setDays] = useState(lic.offlineDays ?? 7);
-
-  return (
-    <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-      <div className="row" style={{ gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-        <div className="field" style={{ margin: 0 }}>
-          <label>Offline Access Lease (days)</label>
-          <input className="input" type="number" min={1} value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ width: 100 }} />
-        </div>
-        <button className="btn btn--sm" onClick={() => onSaveOffline(days)}>Save</button>
-      </div>
-      <p className="muted" style={{ fontSize: 11.5, marginTop: 8 }}>
-        A device validates online at every login (and periodically while online). Within the Offline Access Lease, it stays usable offline; once the lease itself lapses, it's signed out and must reconnect to the internet to reactivate.
-      </p>
     </div>
   );
 }

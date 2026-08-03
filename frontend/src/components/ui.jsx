@@ -135,10 +135,12 @@ export function CategorySelect({ value, onChange, options = [], placeholder }) {
  */
 export function SupplierSelect({ value, onChange, placeholder }) {
   const { t } = useTranslation();
+  const notify = useUI((s) => s.notify);
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     api.get('/suppliers').then((r) => setSuppliers(r.data || [])).finally(() => setLoading(false));
@@ -148,12 +150,23 @@ export function SupplierSelect({ value, onChange, placeholder }) {
 
   async function handleCreate() {
     const name = newName.trim();
-    if (!name) return;
-    const res = await api.post('/suppliers', { name });
-    onChange(res.data.id);
-    setSuppliers([...suppliers, res.data]);
-    setAdding(false);
-    setNewName('');
+    if (!name || creating) return;
+    setCreating(true);
+    try {
+      const res = await api.post('/suppliers', { name });
+      onChange(res.data.id);
+      setSuppliers([...suppliers, res.data]);
+      setAdding(false);
+      setNewName('');
+    } catch (e) {
+      // Both callers (onKeyDown Enter, and onBlur) previously let this
+      // rejection vanish silently — a failure (duplicate name, network
+      // blip) left the user staring at an input that just "did nothing",
+      // with no way to tell whether the supplier was actually created.
+      notify(e.response?.data?.error || t('suppliers.createFailed', 'Failed to create supplier'), 'error');
+    } finally {
+      setCreating(false);
+    }
   }
 
   if (loading) return <span className="text--muted">{t('common.loading', 'Loading…')}</span>;

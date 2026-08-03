@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { licenseService } from './licenseService.js';
+import { getTrustedNow } from '../utils/trustedTime.js';
 import { createTestRestaurant } from '../test-helpers/fixtures.js';
 
 test('validateLicense rejects an inactive (never-activated) license', async () => {
@@ -22,6 +23,31 @@ test('validateLicense rejects and flips status when expirationDate has passed', 
   await assert.rejects(() => licenseService.validateLicense(restaurant.id), /subscription has expired/);
   const license = await licenseService.getLicenseByRestaurant(restaurant.id);
   assert.equal(license.status, 'expired');
+});
+
+// This backend runs on the SAME machine as the user (embedded in Electron) —
+// rolling the OS system clock backward would otherwise fool a plain
+// `new Date() < expirationDate` comparison exactly as it would on the
+// frontend (which already has its own monotonic-clock defense). Once
+// getTrustedNow() has observed the real current time, an already-expired
+// license must stay rejected even if Date.now() is later made to lie.
+test('validateLicense cannot be bypassed by winding the system clock backward after the real expiration was already observed (clock-rollback regression)', async () => {
+  const { restaurant, activationToken } = await createTestRestaurant();
+  await licenseService.activateLicense(restaurant.id, activationToken);
+  await licenseService.reduceLicenseDuration(restaurant.id, 365); // force expiry in real time
+  await assert.rejects(() => licenseService.validateLicense(restaurant.id), /subscription has expired/);
+  // Confirm the real current time has been observed/persisted by now.
+  const observedNow = getTrustedNow();
+
+  const originalNow = Date.now;
+  try {
+    // Attacker rolls the OS clock back a year to make the license look
+    // like it hasn't expired yet.
+    Date.now = () => observedNow - 365 * 24 * 60 * 60 * 1000;
+    await assert.rejects(() => licenseService.validateLicense(restaurant.id), /subscription has expired/);
+  } finally {
+    Date.now = originalNow;
+  }
 });
 
 test('validateLicense rejects a revoked license', async () => {
@@ -62,19 +88,11 @@ test('setLicenseForever sets the sentinel far-future expiration and activates th
 });
 
 // Regression: `if (value < min)` silently passes for NaN (`NaN < 1` is
-// `false` in JS), previously letting e.g. offlineDays:"abc" be stored and
-// later crash every login for that restaurant via an uncaught RangeError
-// from `new Date().toISOString()` on an Invalid Date. requireFiniteNumber
-// must reject non-numeric/too-low input up front, for every numeric setter.
-test('changeOfflineDays rejects non-numeric and out-of-range input', async () => {
-  const { restaurant } = await createTestRestaurant();
-  await assert.rejects(() => licenseService.changeOfflineDays(restaurant.id, 'abc'), /Offline days must be a number/);
-  await assert.rejects(() => licenseService.changeOfflineDays(restaurant.id, NaN), /Offline days must be a number/);
-  await assert.rejects(() => licenseService.changeOfflineDays(restaurant.id, -1), /Offline days must be a number/);
-  const ok = await licenseService.changeOfflineDays(restaurant.id, 5);
-  assert.equal(ok.offlineDays, 5);
-});
-
+// `false` in JS), previously letting e.g. maximumDevices:"abc" be stored and
+// later crash every login for that restaurant via an uncaught RangeError.
+// requireFiniteNumber must reject non-numeric/too-low input up front, for
+// every remaining numeric setter (offlineDays/validationIntervalHours/
+// sessionTimeoutMinutes are no longer independently settable — see below).
 test('changeMaximumDevices rejects non-numeric and below-minimum input', async () => {
   const { restaurant } = await createTestRestaurant();
   await assert.rejects(() => licenseService.changeMaximumDevices(restaurant.id, 'abc'), /Maximum devices must be a number/);
@@ -83,16 +101,24 @@ test('changeMaximumDevices rejects non-numeric and below-minimum input', async (
   assert.equal(ok.maximumDevices, 3);
 });
 
-test('changeValidationInterval rejects non-numeric and below-minimum input', async () => {
-  const { restaurant } = await createTestRestaurant();
-  await assert.rejects(() => licenseService.changeValidationInterval(restaurant.id, 'abc'), /Validation interval must be a number/);
-  await assert.rejects(() => licenseService.changeValidationInterval(restaurant.id, 0), /Validation interval must be a number/);
-  const ok = await licenseService.changeValidationInterval(restaurant.id, 12);
-  assert.equal(ok.validationIntervalHours, 12);
-});
-
-test('changeMaxConcurrentCashierSessions and changeSessionTimeoutMinutes reject non-numeric input', async () => {
+test('changeMaxConcurrentCashierSessions rejects non-numeric input', async () => {
   const { restaurant } = await createTestRestaurant();
   await assert.rejects(() => licenseService.changeMaxConcurrentCashierSessions(restaurant.id, 'abc'), /Concurrent cashier sessions must be a number/);
-  await assert.rejects(() => licenseService.changeSessionTimeoutMinutes(restaurant.id, 'abc'), /Session timeout must be a number/);
+});
+
+// Offline access is merged with the license's own duration — no longer a
+// separately-configurable setting (product decision: Session Timeout and
+// Validation Interval were removed from the Super Admin UI entirely, and
+// Offline Days was merged into License Days rather than kept independent).
+test('createLicense merges offlineDays with the license\'s own day count', async () => {
+  const { restaurant } = await createTestRestaurant({ licenseOverrides: { days: 45 } });
+  const license = await licenseService.getLicenseByRestaurant(restaurant.id);
+  assert.equal(license.offlineDays, 45, 'offlineDays must equal whatever "days" the license was created with, not a separate value');
+});
+
+test('renewLicense keeps offlineDays merged with the new day count', async () => {
+  const { restaurant, activationToken } = await createTestRestaurant({ licenseOverrides: { days: 30 } });
+  await licenseService.activateLicense(restaurant.id, activationToken);
+  const { license } = await licenseService.renewLicense(restaurant.id, 90);
+  assert.equal(license.offlineDays, 90, 'renewing must keep offlineDays merged with the license\'s new day count');
 });

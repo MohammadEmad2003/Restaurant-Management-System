@@ -4,6 +4,7 @@ import { HttpError } from './errorHandler.js';
 import { secureStore } from '../repositories/secureStore.js';
 import { deviceService } from '../services/deviceService.js';
 import { sessionService } from '../services/sessionService.js';
+import { licenseService } from '../services/licenseService.js';
 import { buildFingerprint } from '../utils/device.js';
 
 /** Verifies the Bearer JWT and attaches req.user = { sub, role, name, restaurantId, deviceId, fingerprint }. */
@@ -58,7 +59,36 @@ export async function requireDeviceBound(req, res, next) {
     }
     return next();
   } catch (err) {
-    return res.status(401).json({ error: err.message || 'Device validation failed' });
+    return res.status(err.status || 401).json({ error: err.message || 'Device validation failed' });
+  }
+}
+
+/**
+ * The restaurant's license itself was previously only ever checked at LOGIN
+ * (authService.loginRestaurantUser) — never on any request afterward. That
+ * meant an already-logged-in session (valid JWT, valid device, valid
+ * session) could keep using every feature indefinitely — up to the JWT's
+ * full lifetime — even after the license expired, was revoked, or was
+ * suspended, with zero server-side re-check. It also meant calling the API
+ * directly (bypassing the frontend's own client-side offline-license expiry
+ * UI entirely, e.g. via curl with a cached token+device-secret) was never
+ * actually blocked by anything.
+ *
+ * A SEPARATE middleware from requireDeviceBound (rather than folded into
+ * it) specifically so a small number of license-status/self-service routes
+ * (`GET /license/status`, `GET /license/my-devices`, ...) can still use
+ * requireDeviceBound alone and remain reachable even once the license has
+ * expired — an admin needs to be able to SEE that it expired, not be
+ * locked out of the one screen that would tell them so.
+ */
+export async function requireActiveLicense(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+  if (req.user.type === 'super_admin') return next();
+  try {
+    await licenseService.validateLicense(req.user.restaurantId);
+    return next();
+  } catch (err) {
+    return res.status(err.status || 403).json({ error: err.message || 'License validation failed' });
   }
 }
 

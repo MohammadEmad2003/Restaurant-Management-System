@@ -28,6 +28,7 @@ export default function Clients() {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState({ city: '', minVisits: '', maxVisits: '', minSpent: '', maxSpent: '', sortBy: '' });
+  const [saving, setSaving] = useState(false);
 
   const fetchClients = useCallback(async () => {
     setLoading(true);
@@ -70,6 +71,11 @@ export default function Clients() {
   };
 
   const save = async () => {
+    // Guards against a double-click firing two requests (a real risk on a
+    // POS-adjacent screen cashiers use quickly), creating a duplicate
+    // customer with the same name/phone.
+    if (saving) return;
+    setSaving(true);
     const payload = {
       name: form.name,
       phoneNumbers: form.phone ? [form.phone] : [],
@@ -89,6 +95,7 @@ export default function Clients() {
       setOpen(false); setEditingId(null); setForm(emptyForm);
       fetchClients();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+    finally { setSaving(false); }
   };
 
   const removeClient = async (c) => {
@@ -193,7 +200,7 @@ export default function Clients() {
 
       {/* Add / edit modal */}
       <Modal open={open} onClose={() => { setOpen(false); setEditingId(null); }} title={editingId ? t('clients.edit', 'Edit Customer') : t('clients.new', 'New Customer')}
-        footer={<><button className="btn" onClick={() => { setOpen(false); setEditingId(null); }}>{t('common.cancel')}</button><button className="btn btn--primary" onClick={save}>{t('common.save')}</button></>}>
+        footer={<><button className="btn" onClick={() => { setOpen(false); setEditingId(null); }}>{t('common.cancel')}</button><button className="btn btn--primary" disabled={saving} onClick={save}>{t('common.save')}</button></>}>
         <div className="field"><label>{t('common.name')}</label><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
         <div className="field"><label>{t('common.phone')}</label><input className="input ltr" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+20 100 000 0000" /></div>
         <div style={{ marginBottom: 14 }}>

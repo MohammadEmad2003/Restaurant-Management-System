@@ -21,12 +21,17 @@ export default function Reservations() {
   const { data: clients } = useFetch('/clients', []);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ clientId: '', partySize: 2, dateTime: '', tableId: '', notes: '' });
+  const [saving, setSaving] = useState(false);
 
   const save = async () => {
     if (new Date(form.dateTime).getTime() < Date.now()) {
       notify(t('reservations.pastDateError'), 'error');
       return;
     }
+    // Guards against a double-click creating two identical reservations for
+    // the same table/time before the modal closes.
+    if (saving) return;
+    setSaving(true);
     try {
       await api.post('/reservations', {
         clientId: form.clientId || null,
@@ -38,6 +43,7 @@ export default function Reservations() {
       setOpen(false); setForm({ clientId: '', partySize: 2, dateTime: '', tableId: '', notes: '' });
       refetch();
     } catch (e) { notify(e.response?.data?.error || 'Failed', 'error'); }
+    finally { setSaving(false); }
   };
 
   const noShow = async (id) => { await api.patch(`/reservations/${id}/no-show`); notify(t('reservations.markedNoShow', 'Marked no-show')); refetch(); };
@@ -88,7 +94,7 @@ export default function Reservations() {
       </div>
 
       <Modal open={open} onClose={() => setOpen(false)} title={t('reservations.newReservation', 'New Reservation')}
-        footer={<><button className="btn" onClick={() => setOpen(false)}>{t('common.cancel')}</button><button className="btn btn--primary" onClick={save}>{t('common.save')}</button></>}>
+        footer={<><button className="btn" onClick={() => setOpen(false)}>{t('common.cancel')}</button><button className="btn btn--primary" disabled={saving} onClick={save}>{t('common.save')}</button></>}>
         <div className="field"><label>{t('orders.customer')}</label>
           <select className="select" value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })}>
             <option value="">{t('reservations.guest', 'Guest')}</option>

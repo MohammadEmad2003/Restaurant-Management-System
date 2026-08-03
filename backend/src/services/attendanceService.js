@@ -3,6 +3,7 @@ import { secureStore } from '../repositories/secureStore.js';
 import { HttpError } from '../middleware/errorHandler.js';
 import { verifyPassword, sanitize } from '../utils/hash.js';
 import { shiftService } from './shiftService.js';
+import { withLock } from '../utils/lock.js';
 
 const store = secureStore();
 
@@ -76,30 +77,38 @@ export const attendanceService = {
   },
 
   async clockIn(workerId, user) {
-    const open = (await repo('attendance').getAll({ workerId, restaurantId: user?.restaurantId })).find((a) => !a.checkOutTime && a.status !== 'absent');
-    if (open) throw new HttpError(409, 'Already clocked in');
-    const checkInTime = Date.now();
-    const worker = await repo('workers').getById(workerId);
-    if (user?.restaurantId && worker?.restaurantId && worker.restaurantId !== user.restaurantId) {
-      throw new HttpError(404, 'worker not found');
-    }
-    const { shift, lateMinutes, isOffDay } = await resolveShift(workerId, checkInTime, user);
-    const record = await repo('attendance').create({
-      workerId,
-      workerName: worker?.name || null,
-      checkInTime,
-      checkOutTime: null,
-      date: todayStr(),
-      totalHours: 0,
-      overtimeHours: 0,
-      shift,
-      lateMinutes,
-      isOffDay,
-      overtimeApproved: true,
-      status: 'present',
-      restaurantId: user?.restaurantId,
+    // Check-then-act (find no open record, then create one) without a lock
+    // lets a double-tap on the shared kiosk (or two near-simultaneous
+    // devices) both pass the check and both create an open record — the
+    // worker ends up with two concurrently "open" clock-ins, and clockOut
+    // only ever closes the first match it finds, leaving the other
+    // permanently open and silently inflating totalHours/overtime forever.
+    return withLock(`attendance-${workerId}`, async () => {
+      const open = (await repo('attendance').getAll({ workerId, restaurantId: user?.restaurantId })).find((a) => !a.checkOutTime && a.status !== 'absent');
+      if (open) throw new HttpError(409, 'Already clocked in');
+      const checkInTime = Date.now();
+      const worker = await repo('workers').getById(workerId);
+      if (user?.restaurantId && worker?.restaurantId && worker.restaurantId !== user.restaurantId) {
+        throw new HttpError(404, 'worker not found');
+      }
+      const { shift, lateMinutes, isOffDay } = await resolveShift(workerId, checkInTime, user);
+      const record = await repo('attendance').create({
+        workerId,
+        workerName: worker?.name || null,
+        checkInTime,
+        checkOutTime: null,
+        date: todayStr(),
+        totalHours: 0,
+        overtimeHours: 0,
+        shift,
+        lateMinutes,
+        isOffDay,
+        overtimeApproved: true,
+        status: 'present',
+        restaurantId: user?.restaurantId,
+      });
+      return record;
     });
-    return record;
   },
 
   /**

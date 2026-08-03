@@ -86,6 +86,25 @@ test('business day resets numbering only when a shift opens with NO other shift 
   assert.equal(o3.orderNumber, 'T-001', 'takeaway numbering resets to 1 for the new business day');
 });
 
+// Regression: maybeStartNewDay and nextOrderNumber used to lock on different
+// keys (`business-day-${id}` vs `order-number-${id}`) despite both
+// read-modify-writing the same businessDays row — since orders can be
+// created with no shift open at all (by design), a day-rollover and an
+// order-number mint could interleave and revive a stale pre-reset counter.
+// They now share one lock key; this proves no duplicate/corrupted number
+// can result even when a rollover races a burst of concurrent mints.
+test('nextOrderNumber stays unique even when racing a concurrent maybeStartNewDay rollover', async () => {
+  const { restaurant } = await createTestRestaurant();
+  await businessDayService.nextOrderNumber(restaurant.id, false);
+  await businessDayService.nextOrderNumber(restaurant.id, false);
+
+  const [numbers] = await Promise.all([
+    Promise.all(Array.from({ length: 5 }, () => businessDayService.nextOrderNumber(restaurant.id, false))),
+    businessDayService.maybeStartNewDay(restaurant.id), // no open shifts → this actually resets
+  ]);
+  assert.equal(new Set(numbers).size, numbers.length, 'no two concurrent order numbers may collide, even when a day-rollover races them');
+});
+
 test('reopening a closed shift does not itself start a new business day', async () => {
   const { restaurant } = await createTestRestaurant();
   const cashier = await createCashier(restaurant.id, { username: `bdc_${Math.random().toString(36).slice(2, 8)}` });

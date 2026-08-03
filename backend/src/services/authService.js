@@ -151,7 +151,17 @@ export const authService = {
         online,
       });
 
+      // updateValidationTimestamp's return is a fresh read of the stored row —
+      // it never carries `plainDeviceSecret`, which only ever exists as an
+      // in-memory, never-persisted field on whatever _issueSecret() itself
+      // returned (see its own comment). Losing it here would silently return
+      // deviceSecret: null on every login, leaving the client with no secret
+      // to send on every subsequent request — which requireDeviceBound then
+      // rejects outright (a device with a real stored hash but no secret ever
+      // supplied fails, not passes) — a broken app immediately after a
+      // successful-looking login, not a login failure itself.
       const validatedDevice = await deviceService.updateValidationTimestamp(registeredDevice.id, { online });
+      if (validatedDevice) validatedDevice.plainDeviceSecret = registeredDevice.plainDeviceSecret;
 
       const newJwtId = randomUUID();
       const tokenPayload = {

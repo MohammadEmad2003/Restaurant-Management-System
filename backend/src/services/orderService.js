@@ -263,14 +263,24 @@ export const orderService = {
     // loyalty — automated engine evaluates order value, visit milestone, random reward
     if (order.clientId) {
       const settings = await settingsService.get(user);
-      await evaluateLoyaltyReward(order, settings, user);
-      // update totalSpent independently (engine handles points + visitCount)
-      const client = await repo('clients').getById(order.clientId);
-      if (client && client.restaurantId === user?.restaurantId) {
-        await repo('clients').update(client.id, {
-          totalSpent: +((client.totalSpent || 0) + order.totalPrice).toFixed(2),
-        });
-      }
+      // Both the loyalty engine (loyaltyPoints/visitCount) and the totalSpent
+      // update below read-then-write the same client record without any
+      // atomicity of their own — two orders completing for the same client
+      // within milliseconds of each other (two POS terminals serving the
+      // same walk-in/loyalty customer) would otherwise both read the same
+      // stale snapshot and the second write silently clobbers the first,
+      // losing whichever update ran first. Serialize per-client the same way
+      // deductInventory already serializes per-good.
+      await withLock(`client-${order.clientId}`, async () => {
+        await evaluateLoyaltyReward(order, settings, user);
+        // update totalSpent independently (engine handles points + visitCount)
+        const client = await repo('clients').getById(order.clientId);
+        if (client && client.restaurantId === user?.restaurantId) {
+          await repo('clients').update(client.id, {
+            totalSpent: +((client.totalSpent || 0) + order.totalPrice).toFixed(2),
+          });
+        }
+      });
     }
     // kitchen ticket
     await repo('kdsTickets').create({

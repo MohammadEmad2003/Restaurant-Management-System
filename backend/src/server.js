@@ -73,6 +73,18 @@ app.use(errorHandler);
 import { runMigrations } from './migrations/runMigrations.js';
 
 async function start() {
+  // Not a fatal boot guard: this backend is normally embedded inside the
+  // packaged desktop app, which always runs with NODE_ENV=production but
+  // never has a `.env` file bundled (see the extraResources filter in
+  // frontend/package.json) — refusing to boot here would break every real
+  // installation, not just insecure ones. This only matters for the
+  // separate, optional "centralized backend" deployment mode (see
+  // docs/ARCHITECTURE.md §14) — a loud warning is enough to catch that
+  // misconfiguration without breaking the primary desktop use case.
+  if (config.env === 'production' && config.jwtSecret === 'dev-secret-change-me') {
+    logger.warn('JWT_SECRET is still the default dev value in a production environment — if this backend is reachable by anyone other than this one device, set a real JWT_SECRET immediately (anyone can forge a valid token, including a Super Admin token, using this well-known default).');
+  }
+
   await runMigrations();
 
   // Mock-data seeding is opt-in only now (`npm run seed`) — real data comes

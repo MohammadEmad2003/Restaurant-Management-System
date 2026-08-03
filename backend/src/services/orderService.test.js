@@ -317,6 +317,30 @@ test('listPendingPayments combines agentId + status + date range + search with A
   assert.equal(matched[0].id, orderAhmed.id);
 });
 
+// Regression: evaluateLoyaltyReward (loyaltyPoints/visitCount) and the
+// totalSpent update in _onComplete both read-then-write the same client
+// record with no lock — two orders completing for the same client within
+// milliseconds of each other could lose one side's update (last write wins
+// on a stale read), exactly the class of bug already fixed for inventory
+// deduction but previously left unfixed here.
+test('concurrent order completions for the SAME client never lose a totalSpent/visitCount/loyaltyPoints update (race regression)', async () => {
+  const { restaurant, admin } = await createTestRestaurant();
+  const product = await repo('products').create({ name: 'Race Item', category: 'Main', price: 100, active: true, restaurantId: restaurant.id });
+  const client = await repo('clients').create({
+    name: 'Race Client', phoneNumbers: [], totalSpent: 0, loyaltyPoints: 0, visitCount: 0, restaurantId: restaurant.id,
+  });
+  const user = { sub: admin.id, restaurantId: restaurant.id };
+
+  const N = 8;
+  await Promise.all(Array.from({ length: N }, () => orderService.create({
+    products: [{ productId: product.id, quantity: 1, unitPrice: 100 }], walkIn: true, clientId: client.id,
+  }, user)));
+
+  const finalClient = await repo('clients').getById(client.id);
+  assert.equal(finalClient.totalSpent, 100 * N, 'every concurrent order\'s spend must be counted, none lost to a race');
+  assert.equal(finalClient.visitCount, N, 'every concurrent order\'s visit must be counted, none lost to a race');
+});
+
 test('orderService.list supports an inclusive dateTo (an order placed later the same day is not excluded) and a search term matching orderNumber/clientName', async () => {
   const { restaurant, admin } = await createTestRestaurant();
   const product = await repo('products').create({ name: 'History Item', category: 'Main', price: 40, active: true, restaurantId: restaurant.id });

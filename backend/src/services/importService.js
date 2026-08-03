@@ -4,6 +4,21 @@ import { HttpError } from '../middleware/errorHandler.js';
 
 const COLLECTIONS = { products: 'products', goods: 'goods', clients: 'clients', workers: 'workers' };
 
+/**
+ * Passes a numeric cell through UN-coerced (only substituting `fallback` for
+ * a genuinely empty cell) so `validate()`'s own number-coercion + NaN check
+ * (models/index.js) actually runs on it. Pre-coercing with `Number(...)`
+ * here — the previous behavior — turns a blank/non-numeric cell (e.g. a
+ * "TBD" price) into `NaN` *before* validation ever sees it; since
+ * `typeof NaN === 'number'` in JS, validate()'s `typeof !== 'number'` guard
+ * then never fires, and the NaN silently passes as "valid", corrupting every
+ * downstream total that touches that price/quantity/salary.
+ */
+function numberOrRaw(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return value;
+}
+
 /** Coerce a spreadsheet row into the entity shape. */
 function shape(entity, row) {
   const r = { ...row };
@@ -12,16 +27,16 @@ function shape(entity, row) {
     r.addresses = String(row.addresses || row.address || '').split(/[,;]/).map((s) => s.trim()).filter(Boolean);
   }
   if (entity === 'products') {
-    r.price = Number(row.price);
+    r.price = numberOrRaw(row.price, undefined);
     r.ingredients = []; // recipes linked separately in the UI
   }
   if (entity === 'goods') {
-    r.quantityAvailable = Number(row.quantityAvailable || 0);
-    r.purchasePrice = Number(row.purchasePrice || 0);
-    r.minimumStockLevel = Number(row.minimumStockLevel || 0);
+    r.quantityAvailable = numberOrRaw(row.quantityAvailable, 0);
+    r.purchasePrice = numberOrRaw(row.purchasePrice, 0);
+    r.minimumStockLevel = numberOrRaw(row.minimumStockLevel, 0);
   }
   if (entity === 'workers') {
-    r.salary = Number(row.salary || 0);
+    r.salary = numberOrRaw(row.salary, 0);
     r.role = (row.role || 'cashier').toLowerCase();
   }
   return r;

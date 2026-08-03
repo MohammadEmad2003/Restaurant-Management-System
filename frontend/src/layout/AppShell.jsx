@@ -4,6 +4,7 @@ import { WifiOff } from 'lucide-react';
 import Sidebar from './Sidebar.jsx';
 import Topbar from './Topbar.jsx';
 import OfflineBlock from '../components/OfflineBlock.jsx';
+import { Spinner } from '../components/ui.jsx';
 import { useUI } from '../store/ui.js';
 import { useAuth } from '../store/auth.js';
 import { useConnectivity } from '../store/connectivity.js';
@@ -17,6 +18,7 @@ export default function AppShell() {
   const sidebarOpen = useUI((s) => s.sidebarOpen);
   const online = useConnectivity((s) => s.online);
   const offlineStatus = useAuth((s) => s.offlineStatus);
+  const offlineStatusChecked = useAuth((s) => s.offlineStatusChecked);
 
   // Load currency from settings once.
   useEffect(() => {
@@ -58,6 +60,17 @@ export default function AppShell() {
     if (online && offlineStatus?.tier === 'expired') useAuth.getState().logout();
   }, [online, offlineStatus]);
 
+  // offlineStatus starts `null` — which is not itself a blocking tier — so
+  // without this, the dashboard (and its own data-fetching child page)
+  // would render, and fire real API calls, for at least one frame before
+  // the async signature/expiration check ever completes. The backend
+  // independently re-validates the license on every single request
+  // regardless (see requireActiveLicense), so this is defense-in-depth for
+  // the UI specifically, not the actual security boundary — but "no
+  // dashboard should be displayed" means exactly that: not even briefly.
+  if (!offlineStatusChecked) {
+    return <Spinner />;
+  }
   if (offlineStatus?.tier === 'expired') {
     // evaluateOfflineAccess already supplies the exact right message for
     // whichever specific reason triggered this (restaurant license expired,

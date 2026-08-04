@@ -386,6 +386,11 @@ router.get('/cashier-shifts/current', auth, rbac('ADMIN', 'CASHIER'), h(async (r
 router.get('/cashier-shifts/current-all', auth, h(async (req, res) => res.json(await cashierShiftService.currentAll(req.user))));
 router.get('/cashier-shifts', auth, rbac('ADMIN', 'CASHIER'), h(async (req, res) => res.json(await cashierShiftService.list(req.query, req.user))));
 router.get('/cashier-shifts/:id/analytics', auth, rbac('ADMIN', 'CASHIER'), h(async (req, res) => res.json(await cashierShiftService.shiftAnalytics(req.params.id, req.user))));
+router.get('/cashier-shifts/:id/analytics.pdf', auth, rbac('ADMIN', 'CASHIER'), h(async (req, res) => {
+  const { buffer, filename } = await reportService.cashierShiftPdf(req.params.id, req.query, req.user);
+  res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': contentDisposition(filename || `shift-analytics-${req.params.id}.pdf`) });
+  res.send(buffer);
+}));
 router.post('/cashier-shifts/open', auth, rbac('ADMIN', 'CASHIER'), h(async (req, res) => res.status(201).json(await cashierShiftService.open(req.user, req.body))));
 router.post('/cashier-shifts/:id/close', auth, rbac('ADMIN', 'CASHIER'), h(async (req, res) => res.json(await cashierShiftService.close(req.params.id, req.user, req.body))));
 router.patch('/cashier-shifts/:id/reopen', auth, rbac('ADMIN', 'CASHIER'), h(async (req, res) => res.json(await cashierShiftService.reopen(req.params.id, req.user))));

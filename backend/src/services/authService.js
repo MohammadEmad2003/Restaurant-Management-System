@@ -160,8 +160,22 @@ export const authService = {
       // rejects outright (a device with a real stored hash but no secret ever
       // supplied fails, not passes) — a broken app immediately after a
       // successful-looking login, not a login failure itself.
-      const validatedDevice = await deviceService.updateValidationTimestamp(registeredDevice.id, { online });
-      if (validatedDevice) validatedDevice.plainDeviceSecret = registeredDevice.plainDeviceSecret;
+      //
+      // CRITICAL: build a NEW object here — never mutate `validatedDevice`
+      // in place. secureStore's local-JSON layer returns a LIVE reference
+      // into its own in-memory cached row (see localUpdate in
+      // repositories/secureStore.js: `rows[idx] = {...}; return rows[idx];`)
+      // — assigning onto it directly used to permanently pollute that
+      // cached row with a `plainDeviceSecret` field. Every later write to
+      // that same device (e.g. the next login's fresh secret rotation)
+      // would then spread the polluted row and try to sync a
+      // `plain_device_secret` column to Postgres that doesn't exist,
+      // silently failing (treated as a non-retryable data error) — so the
+      // real secret rotation never reached Postgres while the client
+      // believed it had, permanently desyncing the two and 401ing every
+      // request immediately after the very next login.
+      const validatedDeviceRow = await deviceService.updateValidationTimestamp(registeredDevice.id, { online });
+      const validatedDevice = validatedDeviceRow ? { ...validatedDeviceRow, plainDeviceSecret: registeredDevice.plainDeviceSecret } : null;
 
       const newJwtId = randomUUID();
       const tokenPayload = {

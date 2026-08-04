@@ -98,7 +98,7 @@ export default {
     totalDiscounts: 'Total Discounts', totalTaxes: 'Total Taxes', cancelledCount: 'Cancelled Orders',
     peakHour: 'Peak Hour (Revenue)', lowestHour: 'Lowest Hour (Revenue)', busiestHour: 'Busiest Hour (Orders)',
     avgGap: 'Avg. Time Between Orders', firstOrder: 'First Order', lastOrder: 'Last Order', duration: 'Shift Duration',
-    paymentBreakdown: 'Payment Method Breakdown', invoices: 'Invoices',
+    paymentBreakdown: 'Payment Method Breakdown', invoices: 'Invoices', exportPdf: 'Export PDF',
   },
   clients: {
     new: 'New Customer', edit: 'Edit Customer', added: 'Customer added', updated: 'Customer updated',

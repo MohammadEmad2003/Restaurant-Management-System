@@ -98,7 +98,7 @@ export default {
     totalDiscounts: 'إجمالي الخصومات', totalTaxes: 'إجمالي الضرائب', cancelledCount: 'الطلبات الملغاة',
     peakHour: 'ذروة المبيعات (الإيراد)', lowestHour: 'أقل ساعة (الإيراد)', busiestHour: 'أكثر ساعة ازدحاماً (الطلبات)',
     avgGap: 'متوسط الوقت بين الطلبات', firstOrder: 'أول طلب', lastOrder: 'آخر طلب', duration: 'مدة الوردية',
-    paymentBreakdown: 'تفصيل طريقة الدفع', invoices: 'الفواتير',
+    paymentBreakdown: 'تفصيل طريقة الدفع', invoices: 'الفواتير', exportPdf: 'تصدير PDF',
   },
   clients: {
     new: 'عميل جديد', edit: 'تعديل العميل', added: 'تمت إضافة العميل', updated: 'تم تحديث العميل',

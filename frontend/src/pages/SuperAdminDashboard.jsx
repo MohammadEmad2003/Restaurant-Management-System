@@ -272,7 +272,13 @@ export default function SuperAdminDashboard() {
                 </select>
               </div>
               <div className="card-grid">
-                {data.users.map((u) => (
+                {/* Delete is a soft delete server-side (status → 'inactive',
+                    keeping historical orders/salaries intact) — filtered out
+                    here so a deleted user actually disappears from view
+                    instead of lingering in the list. Suspended users still
+                    show (with an Activate button) since suspend is meant to
+                    be visibly reversible; delete is not. */}
+                {data.users.filter((u) => u.status !== 'inactive').map((u) => (
                   <div key={u.id} className="card" style={{ padding: 16 }}>
                     <div style={{ fontWeight: 700 }}>{u.username}</div>
                     <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>{u.role} · {u.status} · restaurant {u.restaurantId?.slice(0, 8)}</div>
@@ -330,10 +336,20 @@ export default function SuperAdminDashboard() {
                     <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginTop: 8, marginBottom: 12 }}>
                       <button className="btn btn--sm" onClick={() => { navigator.clipboard.writeText(lic.activationToken); notify('Token copied'); }}>Copy Token</button>
                       <button className="btn btn--sm" onClick={() => action('post', `/superadmin/licenses/${lic.restaurantId}/regenerate-token`, 'Token regenerated')}>Regenerate</button>
-                      <button className="btn btn--sm" onClick={() => action('post', `/superadmin/licenses/${lic.restaurantId}/renew`, 'Renewed')}>Renew</button>
                       <button className="btn btn--sm" onClick={() => action('post', `/superadmin/licenses/${lic.restaurantId}/set-forever`, 'License set to never expire')}>Never Expire</button>
                       <button className="btn btn--danger btn--sm" onClick={() => revokeLicense(lic)}>Revoke</button>
                     </div>
+                    <LicenseDurationSettings
+                      key={`${lic.id}-duration`}
+                      onRenew={(days) => action('post', `/superadmin/licenses/${lic.restaurantId}/renew`, `Renewed for ${days} day(s)`, { days })}
+                      onExtend={(days) => action('post', `/superadmin/licenses/${lic.restaurantId}/extend`, `Extended by ${days} day(s)`, { days })}
+                      onReduce={(days) => action('post', `/superadmin/licenses/${lic.restaurantId}/reduce`, `Reduced by ${days} day(s)`, { days })}
+                    />
+                    <MaxDevicesSettings
+                      key={`${lic.id}-devices`}
+                      lic={lic}
+                      onSaveMax={(count) => action('patch', `/superadmin/licenses/${lic.restaurantId}/max-devices`, 'Max devices updated', { count })}
+                    />
                     <CashierSessionSettings
                       key={lic.id}
                       lic={lic}
@@ -356,7 +372,12 @@ export default function SuperAdminDashboard() {
                 </select>
               </div>
               <div className="card-grid">
-                {data.devices.map((d) => (
+                {/* Delete is a soft delete server-side (status → 'revoked') —
+                    filtered out here so a deleted device actually
+                    disappears from view instead of lingering in the list.
+                    A 'reset' device still shows (it's meant to be reusable —
+                    the next login from that fingerprint reactivates it). */}
+                {data.devices.filter((d) => d.status !== 'revoked').map((d) => (
                   <div key={d.id} className="card" style={{ padding: 16 }}>
                     <div style={{ fontWeight: 700 }}>{d.deviceName}</div>
                     <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>{d.operatingSystem} · {d.status}</div>
@@ -496,6 +517,42 @@ function CreateRestaurantForm({ onClose, onCreate }) {
   );
 }
 
+function LicenseDurationSettings({ onRenew, onExtend, onReduce }) {
+  const [days, setDays] = useState(30);
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div className="row" style={{ gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div className="field" style={{ margin: 0 }}>
+          <label>Days</label>
+          <input className="input" type="number" min={1} value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ width: 100 }} />
+        </div>
+        <button className="btn btn--sm" title="Set the expiration to exactly this many days from now" onClick={() => days > 0 && onRenew(days)}>Renew for N days</button>
+        <button className="btn btn--sm" title="Add this many days to the current expiration" onClick={() => days > 0 && onExtend(days)}>Extend by N days</button>
+        <button className="btn btn--sm" title="Subtract this many days from the current expiration" onClick={() => days > 0 && onReduce(days)}>Reduce by N days</button>
+      </div>
+      <p className="muted" style={{ fontSize: 11.5, marginTop: 6 }}>
+        Renew resets the expiration to N days from today. Extend/Reduce shift the current expiration date forward or backward by N days instead.
+      </p>
+    </div>
+  );
+}
+
+function MaxDevicesSettings({ lic, onSaveMax }) {
+  const [maxDevices, setMaxDevices] = useState(lic.maximumDevices ?? 1);
+
+  return (
+    <div className="row" style={{ gap: 16, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 12 }}>
+      <div className="field" style={{ margin: 0 }}>
+        <label>Max Devices</label>
+        <input className="input" type="number" min={1} value={maxDevices} onChange={(e) => setMaxDevices(Number(e.target.value))} style={{ width: 100 }} />
+      </div>
+      <button className="btn btn--sm" onClick={() => onSaveMax(maxDevices)}>Save</button>
+      <span className="muted" style={{ fontSize: 11.5 }}>Currently {lic.activeDevices}/{lic.maximumDevices} devices in use.</span>
+    </div>
+  );
+}
+
 function CashierSessionSettings({ lic, onSaveMax }) {
   const [maxSessions, setMaxSessions] = useState(lic.maxConcurrentCashierSessions ?? 1);
 
@@ -514,22 +571,18 @@ function CreateUserForm({ restaurants, defaultRestaurantId, onClose, onCreate })
   const [restaurantId, setRestaurantId] = useState(defaultRestaurantId || restaurants[0]?.id || '');
   const [form, setForm] = useState({ username: 'cashier', password: 'cashier123', role: 'CASHIER', name: '' });
   const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState('');
 
   const submit = async () => {
     if (!restaurantId || !form.username.trim() || !form.password) return;
     setSubmitting(true);
     try {
       await onCreate(restaurantId, { username: form.username.trim(), password: form.password, role: form.role, name: form.name.trim() || undefined });
-      setDone(`Created ${form.username.trim()}`);
-      setForm({ username: '', password: '', role: form.role, name: '' });
-      setTimeout(() => setDone(''), 2000);
+      onClose();
     } finally { setSubmitting(false); }
   };
 
   return (
     <div>
-      {done && <div className="badge badge--success" style={{ marginBottom: 14 }}>{done}</div>}
       <div className="field"><label>Restaurant</label>
         <select className="select" value={restaurantId} onChange={(e) => setRestaurantId(e.target.value)}>
           {restaurants.map((r) => <option key={r.id} value={r.id}>{r.restaurantName}</option>)}

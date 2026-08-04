@@ -61,7 +61,10 @@ export default function Orders() {
   const [custEditingId, setCustEditingId] = useState(null);
   const [custSaving, setCustSaving] = useState(false);
 
-  const categories = useMemo(() => ['all', ...new Set((products || []).map((p) => p.category))], [products]);
+  // A product created with no category (blank/undefined) used to add an
+  // empty string into this list — an extra filter chip with no label at
+  // all, rendering as a blank white button next to the real categories.
+  const categories = useMemo(() => ['all', ...new Set((products || []).map((p) => p.category).filter(Boolean))], [products]);
   const filtered = (products || []).filter((p) =>
     (cat === 'all' || p.category === cat) && shortName(p.name, lang).toLowerCase().includes(q.toLowerCase()));
 

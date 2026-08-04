@@ -87,7 +87,7 @@ input, select, textarea { font-family: inherit; }
 }
 .btn:hover { background: var(--surface); border-color: var(--brand-200); color: var(--ink); }
 .btn--primary { background: var(--brand-grad); color: #fff; border: none; box-shadow: var(--shadow-brand); }
-.btn--primary:hover { filter: brightness(1.05); transform: translateY(-1px); color: #fff; }
+.btn--primary:hover { box-shadow: var(--shadow-brand), 0 4px 14px rgba(124,58,237,.3); transform: translateY(-1px); color: #fff; }
 .btn--ghost { background: transparent; border-color: transparent; }
 .btn--ghost:hover { background: var(--surface-2); }
 .btn--danger { background: var(--danger-soft); color: var(--danger); border-color: transparent; }

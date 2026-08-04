@@ -122,3 +122,34 @@ test('renewLicense keeps offlineDays merged with the new day count', async () =>
   const { license } = await licenseService.renewLicense(restaurant.id, 90);
   assert.equal(license.offlineDays, 90, 'renewing must keep offlineDays merged with the license\'s new day count');
 });
+
+// Regression: the Super Admin UI now lets an admin type an arbitrary number
+// of days for Renew/Extend/Reduce (not just a fixed 30-day default) — these
+// three must reject non-numeric/non-positive input the same way every other
+// numeric license setter already does (requireFiniteNumber), or a bad value
+// reaches `setDate(getDate() + "abc")` → Invalid Date → an uncaught
+// RangeError the next time this license's expirationDate is read anywhere.
+test('renewLicense rejects non-numeric and non-positive day counts', async () => {
+  const { restaurant } = await createTestRestaurant();
+  await assert.rejects(() => licenseService.renewLicense(restaurant.id, 'abc'), /Renewal days must be a number/);
+  await assert.rejects(() => licenseService.renewLicense(restaurant.id, 0), /Renewal days must be a number/);
+  await assert.rejects(() => licenseService.renewLicense(restaurant.id, -5), /Renewal days must be a number/);
+});
+
+test('extendLicense rejects non-numeric and non-positive day counts, and correctly extends the current expiration by an arbitrary custom amount', async () => {
+  const { restaurant, activationToken } = await createTestRestaurant();
+  await licenseService.activateLicense(restaurant.id, activationToken);
+  await assert.rejects(() => licenseService.extendLicense(restaurant.id, 'abc'), /Extension days must be a number/);
+  await assert.rejects(() => licenseService.extendLicense(restaurant.id, 0), /Extension days must be a number/);
+
+  const before = await licenseService.getLicenseByRestaurant(restaurant.id);
+  const { expirationDate } = await licenseService.extendLicense(restaurant.id, 200);
+  const daysDiff = (new Date(expirationDate).getTime() - new Date(before.expirationDate).getTime()) / 86400000;
+  assert.ok(daysDiff > 199.9 && daysDiff < 200.1, 'must extend by exactly the custom day count requested, not a fixed default');
+});
+
+test('reduceLicenseDuration rejects non-numeric and non-positive day counts', async () => {
+  const { restaurant } = await createTestRestaurant();
+  await assert.rejects(() => licenseService.reduceLicenseDuration(restaurant.id, 'abc'), /Reduction days must be a number/);
+  await assert.rejects(() => licenseService.reduceLicenseDuration(restaurant.id, -1), /Reduction days must be a number/);
+});

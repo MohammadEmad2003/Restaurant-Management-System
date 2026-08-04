@@ -206,10 +206,15 @@ export default function PendingPayments() {
               placeholder={t('pendingPayments.allAgents', 'All agents')}
               options={[{ value: '', label: t('pendingPayments.allAgents', 'All agents') }, ...(agents || []).map((a) => ({ value: a.id, label: a.name }))]} />
           </div>
-          <div className="field" style={{ flex: '1 1 0', minWidth: 115, marginBottom: 0 }}>
+          {/* No `field` class here — DateField already wraps itself in its
+              own `.field` + `<label>` when given a `label` prop; adding a
+              second `.field` wrapper around it nested a field inside a
+              field, which is what actually broke this row's layout (the
+              labels floating away from their inputs). */}
+          <div style={{ flex: '1 1 0', minWidth: 115 }}>
             <DateField label={t('reports.from', 'From')} value={dateFrom} onChange={setDateFrom} />
           </div>
-          <div className="field" style={{ flex: '1 1 0', minWidth: 115, marginBottom: 0 }}>
+          <div style={{ flex: '1 1 0', minWidth: 115 }}>
             <DateField label={t('reports.to', 'To')} value={dateTo} onChange={setDateTo} />
           </div>
           <div className="field" style={{ flex: '1 1 0', minWidth: 115, marginBottom: 0 }}>

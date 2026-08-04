@@ -124,9 +124,15 @@ export function secureStore() {
     async create(table, data) {
       const now = new Date().toISOString();
       const record = { id: data.id || randomUUID(), ...data, createdAt: now, updatedAt: now };
-      localCreate(table, record);
+      // `localCreate` pushes `record` itself into its own cached rows array
+      // (by reference) — returning that same `record` variable here (the
+      // previous behavior) handed the caller a live handle into this
+      // store's internal state, so mutating it after the fact silently
+      // corrupted what's cached/persisted. Return the defensive copy
+      // localCreate hands back instead — see its own comment.
+      const stored = localCreate(table, record);
       await this._mirror(table, 'create', record.id, record);
-      return record;
+      return stored;
     },
 
     async update(table, id, patch) {
@@ -275,15 +281,30 @@ async function pgRemove(db, table, id) {
 
 // ─── Local JSON helpers ─────────────────────────────────────────────
 
+// `.filter()` alone copies the ARRAY but not its elements — the returned
+// rows would still be the exact same object references cached internally.
+// Mapped through a shallow copy for the same reason localCreate/localUpdate
+// return copies below: nothing a caller does to a row it read should be
+// able to reach back into this store's actual state.
 function localFindAll(table, filter) {
-  return localStore.load(table).filter((r) => matches(r, filter));
+  return localStore.load(table).filter((r) => matches(r, filter)).map((r) => ({ ...r }));
 }
 
+// Both return a defensive COPY, never the live object stored in `rows` —
+// returning the live reference (the previous behavior) let a caller's
+// in-place mutation of the "returned device"/"returned record" silently
+// corrupt this store's actual cached (and about-to-be-persisted/mirrored)
+// state, which is exactly how a stray `device.plainDeviceSecret = ...`
+// assignment in authService.js once permanently broke every future
+// Postgres write for that device row (see the TRANSIENT_FIELDS comment
+// below for the full story). A copy makes that entire class of bug
+// impossible: nothing the caller does to what it gets back can ever
+// reach back into this store.
 function localCreate(table, record) {
   const rows = localStore.load(table);
   rows.push(record);
   localStore.set(table, rows);
-  return record;
+  return { ...record };
 }
 
 function localUpdate(table, id, patch) {
@@ -292,7 +313,7 @@ function localUpdate(table, id, patch) {
   if (idx === -1) return null;
   rows[idx] = { ...rows[idx], ...patch, id };
   localStore.set(table, rows);
-  return rows[idx];
+  return { ...rows[idx] };
 }
 
 function localRemove(table, id) {
@@ -343,10 +364,26 @@ function snake(camel) {
   return FIELD_MAP[camel] || camel.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 }
 
+// Fields that are only ever meant to exist transiently on an in-memory
+// object (e.g. authService returns `device.plainDeviceSecret` to hand the
+// plaintext secret to the client exactly once — it is never itself a
+// column) — must never reach a Postgres write. Regression: this was
+// previously enforced only by callers being careful never to mutate a
+// row object returned from this store, which failed once (a direct
+// `device.plainDeviceSecret = ...` assignment permanently polluted that
+// row's in-memory cache), silently breaking every subsequent Postgres
+// write for that row (an unknown column error, swallowed as a
+// non-retryable "data error") while local state and the client both
+// believed the write had succeeded — this single choke point (every
+// Postgres write for every secure collection passes through
+// objectToRow) is what actually guarantees it can't happen again,
+// regardless of how a transient field ends up on the object.
+const TRANSIENT_FIELDS = new Set(['plainDeviceSecret']);
+
 function objectToRow(obj) {
   const row = {};
   for (const [key, value] of Object.entries(obj)) {
-    if (value === undefined) continue;
+    if (value === undefined || TRANSIENT_FIELDS.has(key)) continue;
     const col = FIELD_MAP[key] || key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
     row[col] = value === null ? null : value;
   }

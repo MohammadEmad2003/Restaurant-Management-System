@@ -14,6 +14,7 @@ import { analyticsService } from './analyticsService.js';
 import { attendanceService } from './attendanceService.js';
 import { salaryService } from './salaryService.js';
 import { settingsService } from './settingsService.js';
+import { cashierShiftService } from './cashierShiftService.js';
 import { HttpError } from '../middleware/errorHandler.js';
 
 const shortLabel = (s) => String(s || '').split('—')[0].trim();
@@ -397,6 +398,89 @@ export const reportService = {
     const { renderReportXlsx } = await loadExcel();
     return renderReportXlsx({ ...spec, sheetName: type, lang: params.lang, filename: params.filename });
   },
+
+  /** Cashier Shift Analytics PDF — every metric shown in the "Shift Analytics"
+   *  modal (summary stats + payment breakdown + invoice list) for one shift. */
+  async cashierShiftPdf(shiftId, params = {}, user) {
+    const { shift, summary, invoices } = await cashierShiftService.shiftAnalytics(shiftId, user);
+    const isAr = params.lang === 'ar';
+    const money2 = (v) => money(v);
+    const durationLabel = (ms) => {
+      const h = Math.floor(ms / 3.6e6);
+      const m = Math.round((ms % 3.6e6) / 6e4);
+      return `${h}h ${m}m`;
+    };
+    const summaryRows = [
+      { metric: isAr ? 'إجمالي الطلبات' : 'Total Orders', value: summary.totalOrders },
+      { metric: isAr ? 'إجمالي الإيرادات' : 'Total Revenue', value: money2(summary.totalRevenue) },
+      { metric: isAr ? 'متوسط قيمة الطلب' : 'Average Order Value', value: money2(summary.averageOrderValue) },
+      { metric: isAr ? 'إجمالي الخصومات' : 'Total Discounts', value: money2(summary.totalDiscounts) },
+      { metric: isAr ? 'إجمالي الضرائب' : 'Total Taxes', value: money2(summary.totalTaxes) },
+      { metric: isAr ? 'الطلبات الملغاة' : 'Cancelled Orders', value: summary.cancelledCount },
+      { metric: isAr ? 'مدة الوردية' : 'Shift Duration', value: durationLabel(summary.shiftDurationMs) },
+      { metric: isAr ? 'أفضل منتج' : 'Top Product', value: summary.topProduct?.name || '—' },
+      { metric: isAr ? 'ساعة الذروة' : 'Peak Hour', value: summary.peakHour ? `${summary.peakHour.hour}:00` : '—' },
+    ];
+    const paymentRows = Object.entries(summary.paymentBreakdown || {}).map(([method, v]) => ({ method, count: v.count, total: money2(v.total) }));
+    const invoiceRows = invoices.map((inv) => ({
+      orderNumber: inv.orderNumber,
+      orderDate: inv.orderDate,
+      clientName: inv.clientName || '—',
+      paymentMethod: inv.paymentMethod,
+      status: inv.status,
+      totalPrice: inv.totalPrice,
+    }));
+
+    const sections = [
+      {
+        title: isAr ? 'ملخص الوردية' : 'Shift Summary',
+        columns: [
+          { key: 'metric', label: 'Metric', labelAr: 'المؤشر' },
+          { key: 'value', label: 'Value', labelAr: 'القيمة', align: 'right' },
+        ],
+        rows: summaryRows,
+      },
+      {
+        title: isAr ? 'طرق الدفع' : 'Payment Breakdown',
+        columns: [
+          { key: 'method', label: 'Method', labelAr: 'طريقة الدفع' },
+          { key: 'count', label: 'Count', labelAr: 'العدد', align: 'right' },
+          { key: 'total', label: 'Total', labelAr: 'الإجمالي', align: 'right' },
+        ],
+        rows: paymentRows,
+      },
+      {
+        title: isAr ? 'الفواتير' : 'Invoices',
+        columns: [
+          { key: 'orderNumber', label: 'Order #', labelAr: 'رقم الطلب' },
+          { key: 'orderDate', label: 'Date', labelAr: 'التاريخ', format: (v) => new Date(v).toLocaleString() },
+          { key: 'clientName', label: 'Customer', labelAr: 'العميل' },
+          { key: 'paymentMethod', label: 'Payment', labelAr: 'الدفع' },
+          { key: 'status', label: 'Status', labelAr: 'الحالة' },
+          { key: 'totalPrice', label: 'Total', labelAr: 'الإجمالي', align: 'right', format: money },
+        ],
+        rows: invoiceRows,
+        totals: { totalPrice: money(invoiceRows.reduce((s, r) => s + (r.totalPrice || 0), 0)) },
+      },
+    ];
+
+    const meta = await settingsMeta(user);
+    const title = isAr ? 'تحليلات الوردية' : 'Shift Analytics';
+    const subtitle = `${new Date(shift.openedAt).toLocaleString()} → ${shift.closedAt ? new Date(shift.closedAt).toLocaleString() : (isAr ? 'مفتوحة الآن' : 'still open')}`;
+    const { renderReportPdfHtml, isPuppeteerMissing } = await loadHtmlReport();
+    try {
+      return await renderReportPdfHtml({ title, subtitle, meta, sections, lang: params.lang, filename: params.filename });
+    } catch (err) {
+      logger.warn(isPuppeteerMissing(err)
+        ? 'puppeteer not installed — using pdfkit for the shift analytics PDF.'
+        : `Chromium PDF render failed (${err.message}) — using pdfkit fallback.`);
+      const { renderMultiReportPdf } = await loadPdf();
+      return renderMultiReportPdf({ title, titleAr: title, subtitle, meta, sections, lang: params.lang, filename: params.filename });
+    }
+  },
 };
+
+// Note: cashierShiftPdf resolves to { buffer, filename } like pdf()/bundlePdf() — callers
+// must destructure `buffer` before sending, not the raw return value.
 
 export default reportService;

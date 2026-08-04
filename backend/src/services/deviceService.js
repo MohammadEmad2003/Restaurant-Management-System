@@ -43,7 +43,15 @@ export const deviceService = {
     const activeDevices = await store.findAll('devices', { restaurantId, status: 'active' });
 
     if (activeDevices.length >= license.maximumDevices) {
-      throw new HttpError(403, 'Maximum device limit reached for this restaurant license');
+      // Deliberately does NOT say "license has expired"/anything expiration-
+      // sounding — this is unrelated to the license's validity or dates, and
+      // renewing/extending/regenerating the license does nothing to fix it
+      // (a real support case: an admin kept renewing a perfectly valid,
+      // non-expired license because this message read like a subscription
+      // problem). The actual fix is either raising Max Devices for this
+      // restaurant, or freeing a slot by deleting/resetting an existing
+      // device — surfaced explicitly so it's obvious what to do next.
+      throw new HttpError(403, `Device limit reached (${license.maximumDevices} device${license.maximumDevices === 1 ? '' : 's'} allowed). Ask your Super Admin to raise the device limit, or remove/reset an existing device to free a slot.`);
     }
 
     const device = await store.create('devices', {

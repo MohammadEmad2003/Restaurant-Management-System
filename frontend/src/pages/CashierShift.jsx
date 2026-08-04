@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Wallet, LockOpen, Lock, RefreshCw, CheckCircle2, ArrowRightLeft, Undo2, Printer, Award, BarChart3, Eye } from 'lucide-react';
+import { Wallet, LockOpen, Lock, RefreshCw, CheckCircle2, ArrowRightLeft, Undo2, Printer, Award, BarChart3, Eye, FileDown } from 'lucide-react';
 import { useFetch } from '../hooks/useApi.js';
 import { api, openReport } from '../api/client.js';
 import { useUI } from '../store/ui.js';
@@ -51,6 +51,12 @@ export default function CashierShift() {
   const printInvoice = (order) => {
     const ar = lang === 'ar';
     openReport(`/orders/${order.id}/invoice.pdf${ar ? '?lang=ar' : ''}`);
+  };
+
+  const exportShiftAnalyticsPdf = () => {
+    if (!shiftDetail) return;
+    const ar = lang === 'ar';
+    openReport(`/cashier-shifts/${shiftDetail.id}/analytics.pdf${ar ? '?lang=ar' : ''}`);
   };
 
   const reload = () => { refetch(); refetchHistory(); };
@@ -251,11 +257,15 @@ export default function CashierShift() {
 
       {/* History */}
       <Card title={t('cashierShift.history', 'Recent shifts')} style={{ marginTop: 18 }}>
-        <div className="row wrap" style={{ gap: 12, marginBottom: 14 }}>
-          <DateField label={t('reports.from', 'From')} value={shiftFrom} onChange={setShiftFrom} />
-          <DateField label={t('reports.to', 'To')} value={shiftTo} onChange={setShiftTo} />
+        <div className="row wrap" style={{ gap: 10, marginBottom: 14, alignItems: 'flex-end' }}>
+          <div style={{ flex: '0 0 auto', minWidth: 160 }}>
+            <DateField label={t('reports.from', 'From')} value={shiftFrom} onChange={setShiftFrom} />
+          </div>
+          <div style={{ flex: '0 0 auto', minWidth: 160 }}>
+            <DateField label={t('reports.to', 'To')} value={shiftTo} onChange={setShiftTo} />
+          </div>
           {(shiftFrom || shiftTo) && (
-            <button className="btn btn--sm" style={{ alignSelf: 'flex-end' }} onClick={() => { setShiftFrom(''); setShiftTo(''); }}>
+            <button className="btn btn--sm" onClick={() => { setShiftFrom(''); setShiftTo(''); }}>
               {t('common.clear', 'Clear')}
             </button>
           )}
@@ -290,6 +300,11 @@ export default function CashierShift() {
           const s = shiftDetailData.summary;
           return (
             <>
+              <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 12 }}>
+                <button className="btn btn--sm" onClick={exportShiftAnalyticsPdf}>
+                  <FileDown size={13} /> {t('cashierShift.exportPdf', 'Export PDF')}
+                </button>
+              </div>
               <div className="grid grid--stats" style={{ marginBottom: 16 }}>
                 {analyticsStat(t('cashierShift.ordersCount', 'Total Orders'), s.totalOrders)}
                 {analyticsStat(t('cashierShift.totalRevenue', 'Total Revenue'), money(s.totalRevenue))}

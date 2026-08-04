@@ -56,6 +56,41 @@ test('login returns a usable deviceSecret for a brand-new device, and that exact
   assert.equal(deviceService.validateDeviceSecret(storedDevice, result.deviceSecret), true, 'the returned secret must actually validate against what was persisted');
 });
 
+// Regression: authService used to mutate the object returned from
+// deviceService.updateValidationTimestamp() directly
+// (`validatedDevice.plainDeviceSecret = ...`) to attach the plaintext
+// secret for the response — but that return value is a live reference into
+// secureStore's own cached row (see secureStore.test.js's "no live-
+// reference leak" test), so the mutation permanently polluted the stored
+// device row with a `plainDeviceSecret` field. A SECOND login for the same
+// device (re-registering the same fingerprint) then carried that stray
+// field into the next write, which — against a real Postgres-backed
+// installation — fails outright (no such column) and silently never
+// persists the fresh secret rotation, even though the client believes
+// it received a working one. Verifies both that a second login keeps
+// working AND that no such field ever leaks into the stored row.
+test('logging in twice from the same device never leaves a stray plainDeviceSecret field on the stored device row, and both logins remain fully usable', async () => {
+  const { admin, activationToken } = await createTestRestaurant();
+  await authService.activateRestaurantLicense({
+    username: admin.username, password: 'admin12345', token: activationToken,
+    fingerprint: 'fp-repeat-login', userAgent: DESKTOP_UA,
+  });
+
+  const first = await authService.loginRestaurantUser({
+    username: admin.username, password: 'admin12345', fingerprint: 'fp-repeat-login', userAgent: DESKTOP_UA,
+  });
+  const afterFirst = await deviceService.getDevice(first.device.id);
+  assert.equal(afterFirst.plainDeviceSecret, undefined, 'the stored device row must never carry the transient plaintext-secret field');
+
+  const second = await authService.loginRestaurantUser({
+    username: admin.username, password: 'admin12345', fingerprint: 'fp-repeat-login', userAgent: DESKTOP_UA,
+  });
+  assert.ok(second.deviceSecret, 'the second login must also receive a usable secret');
+  const afterSecond = await deviceService.getDevice(second.device.id);
+  assert.equal(afterSecond.plainDeviceSecret, undefined, 'still no stray field after a second login/secret rotation');
+  assert.equal(deviceService.validateDeviceSecret(afterSecond, second.deviceSecret), true, 'the second login\'s secret must validate against what was actually persisted');
+});
+
 test('login rejects invalid password', async () => {
   const { admin } = await createTestRestaurant();
   await assert.rejects(

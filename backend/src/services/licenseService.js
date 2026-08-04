@@ -121,11 +121,18 @@ export const licenseService = {
   },
 
   async renewLicense(restaurantId, days = DEFAULTS.licenseDays) {
+    // Now reachable from a free-text Super Admin input (any number of days
+    // they want), not just the fixed 30-day default — must reject non-
+    // numeric/non-positive input the same way every other numeric license
+    // setter does, or e.g. `days: "abc"` reaches `setDate(getDate() + "abc")`
+    // → Invalid Date → an uncaught RangeError the next time this license's
+    // expirationDate is read anywhere.
+    const n = requireFiniteNumber(days, 1, 'Renewal days');
     const license = await this.requireLicense(restaurantId);
-    const expirationDate = licenseExpirationDate(days);
+    const expirationDate = licenseExpirationDate(n);
     const updated = await store.update('licenses', license.id, {
       expirationDate,
-      offlineDays: days, // kept merged with the license's own duration, same as at creation
+      offlineDays: n, // kept merged with the license's own duration, same as at creation
       status: 'active',
     });
     return { license: updated, expirationDate };
@@ -144,19 +151,24 @@ export const licenseService = {
   },
 
   async extendLicense(restaurantId, days) {
-    if (!days || days <= 0) throw new HttpError(400, 'Extension days must be positive');
+    // `!days || days <= 0` silently passes for a non-numeric string like
+    // "abc" (`!"abc"` is false, and `"abc" <= 0` coerces to `NaN <= 0` which
+    // is also false) — the same NaN-bypass bug already fixed elsewhere via
+    // requireFiniteNumber, closed here too now that this is reachable from a
+    // free-text Super Admin input.
+    const n = requireFiniteNumber(days, 1, 'Extension days');
     const license = await this.requireLicense(restaurantId);
     const current = new Date(license.expirationDate);
-    current.setDate(current.getDate() + days);
+    current.setDate(current.getDate() + n);
     const updated = await store.update('licenses', license.id, { expirationDate: current.toISOString() });
     return { license: updated, expirationDate: current.toISOString() };
   },
 
   async reduceLicenseDuration(restaurantId, days) {
-    if (!days || days <= 0) throw new HttpError(400, 'Reduction days must be positive');
+    const n = requireFiniteNumber(days, 1, 'Reduction days');
     const license = await this.requireLicense(restaurantId);
     const current = new Date(license.expirationDate);
-    current.setDate(current.getDate() - days);
+    current.setDate(current.getDate() - n);
     const updated = await store.update('licenses', license.id, { expirationDate: current.toISOString() });
     return { license: updated, expirationDate: current.toISOString() };
   },

@@ -59,18 +59,24 @@ export default function OrderHistory() {
     <div className="fade-in">
       <PageHeader title={t('orderHistory.title', 'Order History')} subtitle={t('orderHistory.subtitle', 'Every order this restaurant has placed — search and filter by date')} />
 
-      <div className="row wrap" style={{ gap: 12, marginBottom: 14 }}>
-        <DateField label={t('reports.from', 'From')} value={dateFrom} onChange={setDateFrom} />
-        <DateField label={t('reports.to', 'To')} value={dateTo} onChange={setDateTo} />
-        <div className="field" style={{ flex: 1, minWidth: 200, marginBottom: 0 }}>
-          <label>{t('common.search')}</label>
-          <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('orderHistory.searchPlaceholder', 'Order number, invoice, customer name…')} />
+      <div className="card" style={{ padding: 14, marginBottom: 16 }}>
+        <div className="row wrap" style={{ gap: 10, alignItems: 'flex-end' }}>
+          <div style={{ flex: '0 0 auto', minWidth: 160 }}>
+            <DateField label={t('reports.from', 'From')} value={dateFrom} onChange={setDateFrom} />
+          </div>
+          <div style={{ flex: '0 0 auto', minWidth: 160 }}>
+            <DateField label={t('reports.to', 'To')} value={dateTo} onChange={setDateTo} />
+          </div>
+          <div className="field" style={{ flex: 1, minWidth: 200, marginBottom: 0 }}>
+            <label>{t('common.search')}</label>
+            <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('orderHistory.searchPlaceholder', 'Order number, invoice, customer name…')} />
+          </div>
+          {(dateFrom || dateTo || q) && (
+            <button className="btn btn--sm" onClick={() => { setDateFrom(''); setDateTo(''); setQ(''); }}>
+              {t('common.clear', 'Clear')}
+            </button>
+          )}
         </div>
-        {(dateFrom || dateTo || q) && (
-          <button className="btn btn--sm" style={{ alignSelf: 'flex-end' }} onClick={() => { setDateFrom(''); setDateTo(''); setQ(''); }}>
-            {t('common.clear', 'Clear')}
-          </button>
-        )}
       </div>
 
       <Card>

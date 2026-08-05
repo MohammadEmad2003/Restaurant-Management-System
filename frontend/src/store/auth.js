@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { api } from '../api/client.js';
 import { getFingerprint, getDeviceName, getOperatingSystem } from '../utils/fingerprint.js';
 import { evaluateOfflineAccess } from '../utils/offlineLicense.js';
+import { getHardwareComponents } from '../utils/hardwareId.js';
 
 const stored = (() => {
   try { return JSON.parse(localStorage.getItem('user')); } catch { return null; }
@@ -104,6 +105,7 @@ export const useAuth = create((set, get) => ({
     }
     try {
       const fingerprint = getFingerprint();
+      const hardwareComponents = await getHardwareComponents();
       const { data } = await api.post('/license/activate', {
         username: creds.username,
         password: creds.password,
@@ -111,6 +113,7 @@ export const useAuth = create((set, get) => ({
         fingerprint,
         deviceName: getDeviceName(),
         operatingSystem: getOperatingSystem(),
+        hardwareComponents,
       });
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
@@ -152,7 +155,8 @@ export const useAuth = create((set, get) => ({
   async heartbeat() {
     if (!get().token) return;
     try {
-      const { data } = await api.post('/auth/heartbeat');
+      const hardwareComponents = await getHardwareComponents();
+      const { data } = await api.post('/auth/heartbeat', hardwareComponents ? { hardwareComponents } : {});
       if (data?.offlineLicense) {
         localStorage.setItem('offlineLicense', JSON.stringify(data.offlineLicense));
         set({ offlineLicense: data.offlineLicense });

@@ -12,6 +12,7 @@ import { authService } from '../services/authService.js';
 import { sessionService } from '../services/sessionService.js';
 import { deviceService } from '../services/deviceService.js';
 import { licenseService } from '../services/licenseService.js';
+import { licenseAuthorityClient } from '../services/licenseAuthorityClient.js';
 import { buildFingerprint } from '../utils/device.js';
 import { connectivity } from '../sync/connectivity.js';
 import superAdminRoutes from './superAdmin.js';
@@ -110,6 +111,32 @@ router.post('/auth/heartbeat', auth, requireDeviceBound, requireActiveLicense, h
 
   let offlineLicense = null;
   if (req.user?.type === 'user' && req.user.deviceId && req.user.restaurantId) {
+    // Periodic hardware re-verification: only meaningful for a non-authority
+    // (packaged desktop) instance while genuinely online, and only when the
+    // client actually sent a fresh hardwareComponents reading this round
+    // (an older client build, or a heartbeat that happens to land while
+    // offline, simply skips this — same tolerant pattern as the monthly
+    // online-validation check below). A mismatch is reported by the
+    // authority as 409 (see hardwareBindingService.verifyOrBind) — never
+    // silently re-bound, per product decision. Suspending the LOCAL license
+    // row here is what actually enforces it: requireActiveLicense (mounted
+    // ahead of every restaurant-facing route, including this one) rejects
+    // every request from a suspended license starting with the very next
+    // one, reusing the exact same already-built/tested suspended-license UI
+    // flow instead of any new frontend plumbing.
+    if (!config.isLicenseAuthority && connectivity.isOnline && req.body?.hardwareComponents) {
+      try {
+        await licenseAuthorityClient.revalidate({ restaurantId: req.user.restaurantId, deviceId: req.user.deviceId, hardwareComponents: req.body.hardwareComponents });
+      } catch (err) {
+        if (err.status === 409) {
+          await licenseService.suspendLicense(req.user.restaurantId);
+        }
+        // Any other failure (authority briefly unreachable, timeout, etc.)
+        // is not treated as a hardware problem — just skip this round's
+        // check; the next genuinely-online heartbeat tries again.
+      }
+    }
+
     // Only a genuinely online heartbeat counts toward the monthly
     // online-validation requirement — see deviceService.updateValidationTimestamp.
     const device = await deviceService.updateValidationTimestamp(req.user.deviceId, { online: connectivity.isOnline });

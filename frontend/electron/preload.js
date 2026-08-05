@@ -4,5 +4,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktop', {
   print: () => ipcRenderer.invoke('print'),
   saveFile: (opts) => ipcRenderer.invoke('save-file', opts),
+  getHardwareComponents: () => ipcRenderer.invoke('get-hardware-components'),
   isDesktop: true,
 });

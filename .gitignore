@@ -12,6 +12,7 @@ backend/src/data/
 .env
 .env.local
 .env.*.local
+.env.electron
 
 # Production deploy secrets (generated on the server, never committed)
 deploy/.env.db

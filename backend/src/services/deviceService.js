@@ -3,6 +3,7 @@ import { newId } from '../utils/ids.js';
 import { HttpError } from '../middleware/errorHandler.js';
 import { licenseService } from './licenseService.js';
 import { generateDeviceSecret, hashDeviceSecret, validateDeviceSecret } from '../utils/deviceSecret.js';
+import { getTrustedNow } from '../utils/trustedTime.js';
 
 const store = secureStore();
 
@@ -61,9 +62,9 @@ export const deviceService = {
       fingerprint,
       deviceName: deviceName || 'Unknown Device',
       operatingSystem: operatingSystem || 'Unknown',
-      activationDate: new Date().toISOString(),
-      lastOnline: new Date().toISOString(),
-      lastOnlineValidationAt: new Date().toISOString(),
+      activationDate: new Date(getTrustedNow()).toISOString(),
+      lastOnline: new Date(getTrustedNow()).toISOString(),
+      lastOnlineValidationAt: new Date(getTrustedNow()).toISOString(),
       status: 'active',
     });
     await licenseService.refreshActiveDevices(restaurantId);
@@ -109,7 +110,7 @@ export const deviceService = {
   },
 
   async updateLastOnline(deviceId) {
-    return store.update('devices', deviceId, { lastOnline: new Date().toISOString() });
+    return store.update('devices', deviceId, { lastOnline: new Date(getTrustedNow()).toISOString() });
   },
 
   /**
@@ -124,8 +125,8 @@ export const deviceService = {
    * deadline forever.
    */
   async updateValidationTimestamp(deviceId, { online = true } = {}) {
-    const patch = { lastOnline: new Date().toISOString() };
-    if (online) patch.lastOnlineValidationAt = new Date().toISOString();
+    const patch = { lastOnline: new Date(getTrustedNow()).toISOString() };
+    if (online) patch.lastOnlineValidationAt = new Date(getTrustedNow()).toISOString();
     return store.update('devices', deviceId, patch);
   },
 

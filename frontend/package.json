@@ -76,6 +76,10 @@
       {
         "from": "dist",
         "to": "frontend-dist"
+      },
+      {
+        "from": "../backend/.env.electron",
+        "to": "backend/.env"
       }
     ],
     "afterPack": "scripts/afterPack.cjs",
@@ -87,7 +91,8 @@
     },
     "win": {
       "target": ["nsis"],
-      "icon": "electron/icon.ico"
+      "icon": "electron/icon.ico",
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,

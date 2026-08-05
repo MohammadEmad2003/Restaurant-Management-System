@@ -5,6 +5,7 @@ import { asyncHandler, HttpError } from '../middleware/errorHandler.js';
 import { superAdminService } from '../services/superAdminService.js';
 import { licenseService } from '../services/licenseService.js';
 import { deviceService } from '../services/deviceService.js';
+import { hardwareBindingService } from '../services/hardwareBindingService.js';
 import { sessionService } from '../services/sessionService.js';
 
 const router = Router();
@@ -53,12 +54,20 @@ router.get('/users/:userId/devices', h(async (req, res) => res.json(await device
 /* ───────────── LICENSES ───────────── */
 router.get('/licenses/:restaurantId', h(async (req, res) => {
   const license = await superAdminService.getLicenseByRestaurant(req.params.restaurantId);
-  const token = await licenseService.getActivationToken(req.params.restaurantId);
-  res.json({ ...license, activationToken: token });
+  // No plaintext token here — unlike the old design, the plaintext is never
+  // stored anywhere after issuance (see licenseService.issueActivationToken),
+  // so there is nothing left to read back. Status only (issued/expires/used).
+  const activationTokenStatus = await licenseService.getActivationTokenStatus(req.params.restaurantId);
+  res.json({ ...license, activationTokenStatus });
 }));
 router.post('/licenses/:restaurantId/regenerate-token', h(async (req, res) => {
-  const { token } = await licenseService.regenerateActivationToken(req.params.restaurantId);
-  res.json({ activationToken: token });
+  const { token, expiresAt } = await licenseService.regenerateActivationToken(req.params.restaurantId, {
+    ttlHours: req.body?.ttlHours,
+    issuedBy: req.user?.sub || req.user?.username || null,
+  });
+  // The ONLY moment this plaintext ever exists again after issuance — shown
+  // once in the Super Admin UI, exactly like a device secret.
+  res.json({ activationToken: token, expiresAt });
 }));
 router.post('/licenses/:restaurantId/renew', h(async (req, res) => res.json(await licenseService.renewLicense(req.params.restaurantId, req.body.days))));
 router.post('/licenses/:restaurantId/extend', h(async (req, res) => res.json(await licenseService.extendLicense(req.params.restaurantId, req.body.days))));
@@ -68,6 +77,26 @@ router.patch('/licenses/:restaurantId/revoke', h(async (req, res) => res.json(aw
 router.post('/licenses/:restaurantId/set-forever', h(async (req, res) => res.json(await licenseService.setLicenseForever(req.params.restaurantId))));
 router.patch('/licenses/:restaurantId/max-devices', h(async (req, res) => res.json(await licenseService.changeMaximumDevices(req.params.restaurantId, req.body.count))));
 router.patch('/licenses/:restaurantId/max-concurrent-cashiers', h(async (req, res) => res.json(await licenseService.changeMaxConcurrentCashierSessions(req.params.restaurantId, req.body.count))));
+
+/* ───────────── HARDWARE BINDINGS ─────────────
+ * Per product decision, hardware matching is EXACT — any change (disk swap,
+ * motherboard replacement, firmware rewriting SMBIOS) flips a binding to
+ * 'pending_reset' rather than silently re-binding. This is the queue an
+ * operator works from to tell a routine repair apart from a possible clone:
+ * changedComponents ["disk"] alone reads very differently from
+ * ["board","systemUuid","cpu"] all changing at once. */
+router.get('/hardware-resets', h(async (req, res) => {
+  const restaurants = await superAdminService.listRestaurants();
+  const results = [];
+  for (const r of restaurants) {
+    const pending = await hardwareBindingService.listPendingReset(r.id);
+    for (const p of pending) results.push({ ...p, restaurantName: r.restaurantName });
+  }
+  res.json(results);
+}));
+router.post('/restaurants/:id/devices/:deviceId/approve-hardware-reset', h(async (req, res) => {
+  res.json(await hardwareBindingService.approveReset(req.params.id, req.params.deviceId));
+}));
 
 /* ───────────── DEVICES ───────────── */
 router.get('/restaurants/:id/devices', h(async (req, res) => res.json(await deviceService.listByRestaurant(req.params.id))));

@@ -66,7 +66,46 @@ test('validateLicense rejects a suspended license', async () => {
 
 test('activateLicense rejects an invalid token', async () => {
   const { restaurant } = await createTestRestaurant();
-  await assert.rejects(() => licenseService.activateLicense(restaurant.id, 'WRONG-TOKEN'), /Invalid activation token/);
+  await assert.rejects(() => licenseService.activateLicense(restaurant.id, 'WRONG-TOKEN'), /Invalid or expired activation token/);
+});
+
+// Regression coverage for the old design's biggest gap: a regenerated token
+// used to be reversibly encrypted (readable back to plaintext by anyone with
+// the encryption key), never expired, and could reactivate the same license
+// an unlimited number of times. The new hashed/TTL/single-use table closes
+// all three.
+test('activateLicense rejects a token that has already been consumed once', async () => {
+  const { restaurant, activationToken } = await createTestRestaurant();
+  await licenseService.activateLicense(restaurant.id, activationToken);
+  await assert.rejects(() => licenseService.activateLicense(restaurant.id, activationToken), /Invalid or expired activation token/);
+});
+
+test('activateLicense rejects a token past its TTL, even though it was never consumed', async () => {
+  const { restaurant } = await createTestRestaurant();
+  const { token } = await licenseService.issueActivationToken(restaurant.id, { ttlHours: 1 });
+  const originalNow = Date.now;
+  try {
+    Date.now = () => originalNow() + 2 * 60 * 60 * 1000; // 2h later, past the 1h TTL
+    await assert.rejects(() => licenseService.activateLicense(restaurant.id, token), /Invalid or expired activation token/);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test('issueActivationToken rejects a non-numeric or non-positive TTL', async () => {
+  const { restaurant } = await createTestRestaurant();
+  await assert.rejects(() => licenseService.issueActivationToken(restaurant.id, { ttlHours: 'abc' }), /Token TTL/);
+  await assert.rejects(() => licenseService.issueActivationToken(restaurant.id, { ttlHours: 0 }), /Token TTL/);
+});
+
+test('getActivationTokenStatus never exposes the plaintext token, only issuance/expiry/consumption metadata', async () => {
+  const { restaurant, activationToken } = await createTestRestaurant();
+  const before = await licenseService.getActivationTokenStatus(restaurant.id);
+  assert.equal(before.consumed, false);
+  assert.equal(Object.prototype.hasOwnProperty.call(before, 'token'), false);
+  await licenseService.activateLicense(restaurant.id, activationToken);
+  const after = await licenseService.getActivationTokenStatus(restaurant.id);
+  assert.equal(after.consumed, true);
 });
 
 test('activateLicense re-activates an EXPIRED license once a fresh token is regenerated', async () => {

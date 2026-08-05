@@ -1,9 +1,7 @@
 import { secureStore } from '../repositories/secureStore.js';
-import { encrypt, decrypt } from '../utils/crypto.js';
-import { newId, shortCode } from '../utils/ids.js';
 import { HttpError } from '../middleware/errorHandler.js';
-import { logger } from '../utils/logger.js';
 import { getTrustedNow } from '../utils/trustedTime.js';
+import { generateActivationToken as generateToken, hashActivationToken } from '../utils/activationToken.js';
 
 const store = secureStore();
 
@@ -35,13 +33,25 @@ const DEFAULTS = {
   licenseDays: 30,
   maxConcurrentCashierSessions: 1,
   sessionTimeoutMinutes: 30,
+  // How long a freshly issued activation token remains redeemable before it
+  // must be reissued — closes the old design's biggest gap (a token that
+  // never expired and could be reused indefinitely, see redeemActivationToken).
+  activationTokenTtlHours: 72,
 };
 
 export function generateActivationToken() {
-  return `${shortCode('ACT')}-${shortCode('TKN')}-${shortCode('KEY')}`;
+  return generateToken();
 }
 
-export function licenseExpirationDate(days = DEFAULTS.licenseDays, from = new Date()) {
+// `from` defaults to getTrustedNow() (not `new Date()`) — this backend runs
+// embedded on the same machine as the user, so minting an expiration from an
+// unguarded local clock is exactly the exploit this closes: wind the OS
+// clock forward, activate (which calls this), wind it back — the stored
+// expiration would otherwise silently inherit the lie. Every caller below
+// (activateLicense, renewLicense, extendLicense, reduceLicenseDuration) now
+// goes through this, and the ONLY code path that can actually flip a license
+// to 'active' is activateLicense, itself gated by a freshly redeemed token.
+export function licenseExpirationDate(days = DEFAULTS.licenseDays, from = new Date(getTrustedNow())) {
   const d = new Date(from);
   d.setDate(d.getDate() + days);
   return d.toISOString();
@@ -55,11 +65,9 @@ export const FOREVER_DATE = '9999-12-31T23:59:59.999Z';
 
 export const licenseService = {
   async createLicense(restaurantId, overrides = {}) {
-    const token = generateActivationToken();
     const days = overrides.days || DEFAULTS.licenseDays;
     const license = await store.create('licenses', {
       restaurantId,
-      activationTokenEncrypted: encrypt(token),
       expirationDate: overrides.expirationDate || licenseExpirationDate(days),
       // Offline access is merged with the license's own duration — a
       // device may work offline for as long as the license itself is
@@ -72,6 +80,7 @@ export const licenseService = {
       sessionTimeoutMinutes: DEFAULTS.sessionTimeoutMinutes,
       status: 'inactive',
     });
+    const { token } = await this.issueActivationToken(restaurantId, { ttlHours: overrides.tokenTtlHours, issuedBy: overrides.issuedBy });
     return { license, token };
   },
 
@@ -85,31 +94,118 @@ export const licenseService = {
     return license;
   },
 
-  async getActivationToken(restaurantId) {
-    const license = await this.requireLicense(restaurantId);
-    return decrypt(license.activationTokenEncrypted);
-  },
-
-  async regenerateActivationToken(restaurantId) {
-    const license = await this.requireLicense(restaurantId);
+  /**
+   * Issues a fresh activation token: hashed at rest (never reversible — the
+   * plaintext is returned here ONCE and never again, matching how device
+   * secrets already work in this codebase), with an expiry, redeemable only
+   * once. Replaces the old encrypt()/decrypt() design, which had neither: a
+   * regenerated token could be decrypted back to plaintext by anyone with
+   * the encryption key, never expired, and could reactivate the same
+   * license an unlimited number of times.
+   */
+  async issueActivationToken(restaurantId, { ttlHours = DEFAULTS.activationTokenTtlHours, issuedBy } = {}) {
+    const n = requireFiniteNumber(ttlHours, 1, 'Token TTL (hours)');
     const token = generateActivationToken();
-    await store.update('licenses', license.id, {
-      activationTokenEncrypted: encrypt(token),
-      status: 'inactive',
+    const nowMs = getTrustedNow();
+    const expiresAt = new Date(nowMs + n * 60 * 60 * 1000).toISOString();
+    await store.create('activation_tokens', {
+      restaurantId,
+      tokenHash: hashActivationToken(token),
+      issuedAt: new Date(nowMs).toISOString(),
+      expiresAt,
+      consumedAt: null,
+      issuedBy: issuedBy || null,
     });
-    return { token, license };
+    return { token, expiresAt };
   },
 
-  async activateLicense(restaurantId, token) {
+  /** Status only — never the plaintext, which (unlike the old design) no
+   * longer exists anywhere after issuance. Used by the Super Admin UI to
+   * show "issued 2h ago, expires in 70h, unused" instead of a raw token. */
+  async getActivationTokenStatus(restaurantId) {
+    const tokens = await store.findAll('activation_tokens', { restaurantId });
+    if (!tokens.length) return null;
+    const latest = tokens.sort((a, b) => new Date(b.issuedAt) - new Date(a.issuedAt))[0];
+    return {
+      issuedAt: latest.issuedAt,
+      expiresAt: latest.expiresAt,
+      consumed: Boolean(latest.consumedAt),
+      consumedAt: latest.consumedAt,
+      expired: new Date(latest.expiresAt).getTime() < getTrustedNow(),
+    };
+  },
+
+  async regenerateActivationToken(restaurantId, opts = {}) {
     const license = await this.requireLicense(restaurantId);
-    const currentToken = decrypt(license.activationTokenEncrypted);
-    if (currentToken !== token) throw new HttpError(400, 'Invalid activation token');
+    const { token, expiresAt } = await this.issueActivationToken(restaurantId, opts);
+    await store.update('licenses', license.id, { status: 'inactive' });
+    return { token, expiresAt, license };
+  },
+
+  /**
+   * Atomically redeems a token: the `where consumed_at is null and
+   * expires_at > now` guard in the same UPDATE means two concurrent
+   * activation attempts with the same token can never both succeed (no
+   * separate check-then-consume race window), and a token that's valid but
+   * past its TTL is rejected with the exact same generic message as a wrong
+   * one — no separate "expired" signal an attacker could use to narrow down
+   * otherwise-valid-but-late tokens.
+   *
+   * This method itself is ONLY ever reached when this process legitimately
+   * has direct write access to `licenses`/`activation_tokens` — i.e. the
+   * central authority (config.isLicenseAuthority) or a test run against a
+   * throwaway local store. A packaged desktop install's activation path
+   * never calls this directly (see authService.activateRestaurantLicense) —
+   * it proxies to the authority over HTTPS instead, which is what actually
+   * makes "activation requires the internet" structural rather than
+   * advisory. The local-JSON fallback below exists purely so this stays
+   * testable without a real Postgres instance; it is not a second
+   * activation path a real desktop install can reach.
+   */
+  async redeemActivationToken(restaurantId, token, { hardwareId } = {}) {
+    const tokenHash = hashActivationToken(token);
+    const nowMs = getTrustedNow();
+    const nowIso = new Date(nowMs).toISOString();
+    let consumed = false;
+    try {
+      const rows = await store.raw(
+        `update activation_tokens
+            set consumed_at = $1, consumed_by_hardware_id = $2
+          where restaurant_id = $3 and token_hash = $4
+            and consumed_at is null and expires_at > $1
+          returning id`,
+        [nowIso, hardwareId || null, restaurantId, tokenHash],
+      );
+      consumed = rows.length > 0;
+    } catch (err) {
+      if (err.message !== 'Raw SQL only available when Postgres is reachable') {
+        throw new HttpError(503, 'Activation requires an internet connection right now — please reconnect and try again.');
+      }
+      // No Postgres configured at all for this process (tests, or a
+      // deliberately local-only run) — a single-process, single-threaded
+      // find-then-update never yields to another request in between, so
+      // this is equivalent to the atomic path for that case.
+      const candidates = await store.findAll('activation_tokens', { restaurantId, tokenHash });
+      const match = candidates.find((t) => !t.consumedAt && new Date(t.expiresAt).getTime() > nowMs);
+      if (match) {
+        await store.update('activation_tokens', match.id, { consumedAt: nowIso, consumedByHardwareId: hardwareId || null });
+        consumed = true;
+      }
+    }
+    if (!consumed) throw new HttpError(400, 'Invalid or expired activation token');
+    return true;
+  },
+
+  async activateLicense(restaurantId, token, { hardwareId } = {}) {
+    const license = await this.requireLicense(restaurantId);
     if (license.status === 'revoked') throw new HttpError(403, 'License has been revoked');
     if (license.status === 'suspended') throw new HttpError(403, 'License is suspended');
 
+    await this.redeemActivationToken(restaurantId, token, { hardwareId });
+
     // Activation always grants a fresh expiration window from now — this is
     // what lets a restaurant re-activate after its previous period lapsed
-    // (super admin regenerates the token, admin re-enters it here), so the
+    // (super admin issues a fresh token, admin re-enters it here), so the
     // stale/past expirationDate on an 'expired' license must NOT block this;
     // it's exactly the case this method exists to resolve.
     const updated = await store.update('licenses', license.id, {

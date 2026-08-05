@@ -182,6 +182,11 @@ function ensureSchema(pool) {
       -- audit_logs feature removed; drop the table if it exists from a previous boot.
       drop table if exists audit_logs;
 
+      -- New license issuance/activation goes through the activation_tokens
+      -- table (hashed, TTL, single-use) instead — this column is kept only
+      -- so pre-existing rows/tests aren't broken by a destructive drop.
+      alter table licenses alter column activation_token_encrypted drop not null;
+
       alter table users add column if not exists legacy_worker_id text;
       alter table licenses add column if not exists max_concurrent_cashier_sessions integer not null default 1;
       alter table licenses add column if not exists session_timeout_minutes integer not null default 30;
@@ -191,6 +196,54 @@ function ensureSchema(pool) {
 
       create index if not exists idx_devices_restaurant on devices (restaurant_id);
       create index if not exists idx_users_restaurant on users (restaurant_id);
+
+      -- Activation tokens: hashed (never reversible — only ever known in
+      -- plaintext once, at issuance), time-limited, single-use. Replaces the
+      -- old activation_token_encrypted column on licenses (left in place,
+      -- unused by new code, so existing rows/tests don't need a destructive
+      -- migration) which had neither an expiry nor single-use enforcement —
+      -- the same token could reactivate a license indefinitely, forever.
+      create table if not exists activation_tokens (
+        id uuid primary key default gen_random_uuid(),
+        restaurant_id uuid not null references restaurants(id) on delete cascade,
+        token_hash text not null,
+        issued_at timestamptz not null default now(),
+        expires_at timestamptz not null,
+        consumed_at timestamptz,
+        consumed_by_hardware_id text,
+        issued_by text,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      );
+      create index if not exists idx_activation_tokens_restaurant on activation_tokens (restaurant_id);
+      create index if not exists idx_activation_tokens_hash on activation_tokens (token_hash);
+      alter table activation_tokens add column if not exists updated_at timestamptz not null default now();
+
+      -- One row per activated device, binding it to a hardware identity
+      -- derived from motherboard/SMBIOS/disk/CPU serials (collected in the
+      -- Electron main process — see frontend/electron/main.js). Per product
+      -- decision, matching is EXACT (no fuzzy k-of-n): any component change
+      -- flips this to 'pending_reset' and requires a Super Admin to approve
+      -- issuing a fresh activation token — never an automatic re-bind.
+      create table if not exists hardware_bindings (
+        id uuid primary key default gen_random_uuid(),
+        restaurant_id uuid not null references restaurants(id) on delete cascade,
+        device_id uuid references devices(id) on delete cascade,
+        hardware_id text not null,
+        components jsonb not null default '{}'::jsonb,
+        status text not null default 'active' check (status in ('active', 'pending_reset', 'revoked')),
+        bound_at timestamptz not null default now(),
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      );
+      create index if not exists idx_hardware_bindings_restaurant on hardware_bindings (restaurant_id);
+      do $$
+      begin
+        create unique index if not exists uq_hardware_bindings_device
+          on hardware_bindings (device_id) where device_id is not null;
+      exception when others then
+        raise notice 'Skipping uq_hardware_bindings_device: %', sqlerrm;
+      end $$;
 
       do $$
       begin
@@ -202,6 +255,8 @@ function ensureSchema(pool) {
           grant select, insert, update, delete on public.licenses to service_role;
           grant select, insert, update, delete on public.devices to service_role;
           grant select, insert, update, delete on public.login_sessions to service_role;
+          grant select, insert, update, delete on public.activation_tokens to service_role;
+          grant select, insert, update, delete on public.hardware_bindings to service_role;
         end if;
       end $$;
     `);

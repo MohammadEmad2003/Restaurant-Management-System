@@ -9,7 +9,7 @@
     "dev": "node --watch src/server.js",
     "seed": "node src/seed/seed.js",
     "backfill": "node src/seed/backfill.js",
-    "test": "DATABASE_URL= PERSISTENCE_MODE=local DATA_DIR=\"$(mktemp -d)\" node --test --test-concurrency=1"
+    "test": "DATABASE_URL= PERSISTENCE_MODE=local DATA_DIR=\"$(mktemp -d)\" IS_LICENSE_AUTHORITY=true node --test --test-concurrency=1"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

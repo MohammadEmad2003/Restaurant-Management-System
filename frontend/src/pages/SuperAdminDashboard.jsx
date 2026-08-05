@@ -24,7 +24,7 @@ export default function SuperAdminDashboard() {
   const { user, logout } = useAuth();
   const confirm = useUI((s) => s.confirm);
   const [tab, setTab] = useState('restaurants');
-  const [data, setData] = useState({ restaurants: [], users: [], usersRestaurantId: '', licenses: {}, licensesRestaurantId: '', devices: [], devicesRestaurantId: '', sessions: [], sessionsRestaurantId: '', activeSessions: [], userDevices: {} });
+  const [data, setData] = useState({ restaurants: [], users: [], usersRestaurantId: '', licenses: {}, licensesRestaurantId: '', devices: [], devicesRestaurantId: '', sessions: [], sessionsRestaurantId: '', activeSessions: [], userDevices: {}, hardwareResets: [] });
   const [expandedUser, setExpandedUser] = useState(null);
   const [resetPasswordUser, setResetPasswordUser] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -44,11 +44,12 @@ export default function SuperAdminDashboard() {
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const [restaurants, sessions] = await Promise.all([
+      const [restaurants, sessions, hardwareResets] = await Promise.all([
         api.get('/superadmin/restaurants').then((r) => r.data),
         api.get('/superadmin/sessions').then((r) => r.data),
+        api.get('/superadmin/hardware-resets').then((r) => r.data),
       ]);
-      setData((d) => ({ ...d, restaurants, sessions }));
+      setData((d) => ({ ...d, restaurants, sessions, hardwareResets }));
     } catch (e) { notify('Failed to load data', 'danger'); }
     setLoading(false);
   };
@@ -85,11 +86,42 @@ export default function SuperAdminDashboard() {
     } catch (e) { notify('Failed to load users', 'danger'); }
   };
 
+  // Separate from the generic `action()` helper because the plaintext token
+  // is only ever returned in THIS one response — unlike every other license
+  // action, it can never be read back afterward (see licenseService's
+  // issueActivationToken: only a hash is stored). `notify()` is the same
+  // one-time-display pattern already used for a brand-new restaurant's
+  // first token at creation time.
+  const regenerateToken = async (restaurantId) => {
+    try {
+      const res = await api.post(`/superadmin/licenses/${restaurantId}/regenerate-token`);
+      notify(`New token (copy it now — it won't be shown again): ${res.data.activationToken}`);
+      await loadLicense(restaurantId);
+    } catch (e) { notify(e.response?.data?.error || 'Failed to regenerate token', 'danger'); }
+  };
+
   const loadLicense = async (restaurantId) => {
     try {
       const license = await api.get(`/superadmin/licenses/${restaurantId}`).then((r) => r.data);
       setData((d) => ({ ...d, licenses: { ...d.licenses, [restaurantId]: license }, licensesRestaurantId: restaurantId }));
     } catch (e) { notify('Failed to load license', 'danger'); }
+  };
+
+  // Per product decision, a hardware change (disk swap, motherboard
+  // replacement, ...) never silently re-binds — it lands here, pending
+  // Super Admin review, and the only way forward is approving a reset
+  // (which revokes the old device + binding) and separately issuing that
+  // restaurant a fresh activation token to re-activate on the new/changed
+  // hardware.
+  const approveHardwareReset = async (restaurantId, deviceId, restaurantName) => {
+    const ok = await confirm({
+      title: 'Approve hardware reset?',
+      message: `This revokes the existing device for "${restaurantName}" and frees its license slot. The restaurant will need a freshly issued activation token to come back online — confirm this is a genuine hardware change, not a possible clone, before approving.`,
+      confirmLabel: 'Approve reset',
+      danger: true,
+    });
+    if (!ok) return;
+    await action('post', `/superadmin/restaurants/${restaurantId}/devices/${deviceId}/approve-hardware-reset`, 'Hardware reset approved — issue a new activation token next');
   };
 
   const loadDevices = async (restaurantId) => {
@@ -333,9 +365,21 @@ export default function SuperAdminDashboard() {
                       <span className="badge" title="Offline Access Lease — how long a device may keep working offline before it must validate online again">Offline Lease: {lic.offlineDays}d</span>
                       <span className="badge">Max Cashier Sessions: {lic.maxConcurrentCashierSessions ?? 1}</span>
                     </div>
+                    {/* The plaintext activation token is never stored, so it can no
+                        longer be read back or copied after the fact — only issuance/
+                        expiry/consumption status is shown here. Regenerating shows the
+                        new plaintext exactly once, in the notification banner. */}
+                    {lic.activationTokenStatus && (
+                      <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+                        Activation token: {lic.activationTokenStatus.consumed
+                          ? `used ${new Date(lic.activationTokenStatus.consumedAt).toLocaleString()}`
+                          : lic.activationTokenStatus.expired
+                            ? `expired ${new Date(lic.activationTokenStatus.expiresAt).toLocaleString()}`
+                            : `unused, expires ${new Date(lic.activationTokenStatus.expiresAt).toLocaleString()}`}
+                      </div>
+                    )}
                     <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginTop: 8, marginBottom: 12 }}>
-                      <button className="btn btn--sm" onClick={() => { navigator.clipboard.writeText(lic.activationToken); notify('Token copied'); }}>Copy Token</button>
-                      <button className="btn btn--sm" onClick={() => action('post', `/superadmin/licenses/${lic.restaurantId}/regenerate-token`, 'Token regenerated')}>Regenerate</button>
+                      <button className="btn btn--sm" onClick={() => regenerateToken(lic.restaurantId)}>Issue New Token</button>
                       <button className="btn btn--sm" onClick={() => action('post', `/superadmin/licenses/${lic.restaurantId}/set-forever`, 'License set to never expire')}>Never Expire</button>
                       <button className="btn btn--danger btn--sm" onClick={() => revokeLicense(lic)}>Revoke</button>
                     </div>
@@ -364,6 +408,30 @@ export default function SuperAdminDashboard() {
           {tab === 'devices' && (
             <div>
               <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 16 }}>Devices</h2>
+              {/* Hardware matching is EXACT (product decision) — any change
+                  (disk swap, motherboard replacement, ...) lands here instead
+                  of silently re-binding. changedComponents names which
+                  category differs, never the raw serial — a disk-only diff
+                  reads as a routine repair; board+uuid+cpu all differing at
+                  once reads very differently. */}
+              {data.hardwareResets.length > 0 && (
+                <div className="card" style={{ padding: 16, marginBottom: 16, borderColor: 'var(--danger)' }}>
+                  <div style={{ fontWeight: 700, marginBottom: 8 }}>Hardware changes awaiting approval ({data.hardwareResets.length})</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {data.hardwareResets.map((hr) => (
+                      <div key={hr.id} className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <div style={{ fontSize: 13 }}>
+                          <strong>{hr.restaurantName}</strong>
+                          <span className="muted"> — bound {hr.boundAt ? new Date(hr.boundAt).toLocaleDateString() : '—'}</span>
+                        </div>
+                        <button className="btn btn--danger btn--sm" onClick={() => approveHardwareReset(hr.restaurantId, hr.deviceId, hr.restaurantName)}>
+                          Approve reset
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="field" style={{ maxWidth: 360, marginBottom: 16 }}>
                 <label>Restaurant</label>
                 <select className="select" value={data.devicesRestaurantId || ''} onChange={(e) => { const id = e.target.value; if (id) loadDevices(id); }}>

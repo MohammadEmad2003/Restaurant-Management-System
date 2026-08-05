@@ -57,11 +57,13 @@ test('mutating the object returned by create()/update() must never affect what a
   assert.equal(rereadAfterUpdate.status, 'suspended', 'the legitimate update itself must still have applied');
 });
 
-test('SECURE_COLLECTIONS lists every auth-critical table in dependency-safe order (restaurants before users/licenses/devices, users before devices)', () => {
-  assert.deepEqual(SECURE_COLLECTIONS, ['restaurants', 'users', 'super_admins', 'licenses', 'devices', 'login_sessions']);
+test('SECURE_COLLECTIONS lists every auth-critical table in dependency-safe order (restaurants before users/licenses/devices, users before devices, devices before hardware_bindings)', () => {
+  assert.deepEqual(SECURE_COLLECTIONS, ['restaurants', 'users', 'super_admins', 'licenses', 'devices', 'login_sessions', 'activation_tokens', 'hardware_bindings']);
   const idx = (name) => SECURE_COLLECTIONS.indexOf(name);
   assert.ok(idx('restaurants') < idx('users'));
   assert.ok(idx('restaurants') < idx('licenses'));
   assert.ok(idx('restaurants') < idx('devices'));
   assert.ok(idx('users') < idx('devices'));
+  assert.ok(idx('restaurants') < idx('activation_tokens'));
+  assert.ok(idx('devices') < idx('hardware_bindings'));
 });

@@ -58,6 +58,21 @@ export const config = {
     privateKeyPem: process.env.OFFLINE_LICENSE_PRIVATE_KEY || '',
     publicKeyPem: process.env.OFFLINE_LICENSE_PUBLIC_KEY || '',
   },
+
+  // This exact same codebase runs in two roles:
+  //  - The License Authority: one centrally-hosted, trusted instance (this
+  //    server, bellacucina.duckdns.org) that actually owns activation-token
+  //    redemption, hardware binding, and offline-grant signing. Only ITS
+  //    `.env` sets IS_LICENSE_AUTHORITY=true.
+  //  - An embedded, packaged desktop install: NEVER sets this flag. Every
+  //    licensing-critical write (activate, revalidate) is instead proxied
+  //    over HTTPS to `licenseAuthorityUrl` (see services/licenseAuthorityClient.js)
+  //    — there is no local code path left that can flip a license active or
+  //    mint a validly-signed offline grant, which is what makes "activation
+  //    requires the internet" a structural fact instead of a soft check a
+  //    user could defeat by editing local files.
+  isLicenseAuthority: process.env.IS_LICENSE_AUTHORITY === 'true',
+  licenseAuthorityUrl: (process.env.LICENSE_AUTHORITY_URL || '').replace(/\/+$/, ''),
 };
 
 /**

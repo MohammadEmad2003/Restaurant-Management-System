@@ -1,9 +1,14 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { fork } from 'node:child_process';
+import { fork, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import http from 'node:http';
 import net from 'node:net';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+
+const execFileAsync = promisify(execFile);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
@@ -111,6 +116,12 @@ async function startBackend() {
   const dataDir = path.join(app.getPath('userData'), 'backend-data');
 
   backendProcess = fork(backendEntry, [], {
+    // dotenv (config/index.js's `dotenv.config()`) resolves `.env` relative to
+    // the child process's cwd, not to server.js's own location — this must
+    // match where extraResources copies backend/.env.electron to
+    // (resources/backend/.env, see frontend/package.json) for the bundled
+    // production DATABASE_URL to actually be picked up.
+    cwd: path.join(process.resourcesPath, 'backend'),
     env: {
       ...process.env,
       PORT: String(BACKEND_PORT),
@@ -168,6 +179,80 @@ function createWindow() {
     win.loadURL(`http://localhost:${BACKEND_PORT}/`);
   }
 }
+
+let _cachedHardwareComponents = null;
+
+/**
+ * Collected here in the MAIN process — trusted, unlike the renderer/preload
+ * sandbox, which a compromised page could otherwise feed fake values through
+ * — and cached for the app's lifetime (hardware doesn't change mid-session,
+ * and re-querying WMI on every activation/heartbeat would be wasteful).
+ * This is the identity the license authority binds a device to (see
+ * backend's hardwareBindingService.js) — deliberately independent of the
+ * existing browser-characteristics fingerprint (frontend/src/utils/
+ * fingerprint.js), which changing display resolution or OS language already
+ * alters and so is not a suitable anchor for "is this the same physical
+ * machine".
+ */
+async function collectHardwareComponents() {
+  if (_cachedHardwareComponents) return _cachedHardwareComponents;
+  const result = { board: '', systemUuid: '', disk: '', cpu: '' };
+  try {
+    if (process.platform === 'win32') {
+      const script = [
+        '$ErrorActionPreference = "SilentlyContinue"',
+        '$board = (Get-CimInstance Win32_BaseBoard).SerialNumber',
+        '$uuid = (Get-CimInstance Win32_ComputerSystemProduct).UUID',
+        '$disk = (Get-CimInstance Win32_DiskDrive | Sort-Object Index | Select-Object -First 1).SerialNumber',
+        '$cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1).ProcessorId',
+        '[PSCustomObject]@{ board = $board; systemUuid = $uuid; disk = $disk; cpu = $cpu } | ConvertTo-Json -Compress',
+      ].join('; ');
+      const { stdout } = await execFileAsync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', script],
+        { timeout: 8000 },
+      );
+      const parsed = JSON.parse(stdout.trim() || '{}');
+      result.board = String(parsed.board || '').trim();
+      result.systemUuid = String(parsed.systemUuid || '').trim();
+      result.disk = String(parsed.disk || '').trim();
+      result.cpu = String(parsed.cpu || '').trim();
+    } else if (process.platform === 'linux') {
+      // Best-effort only — this app's shipped/supported target is Windows;
+      // Linux here is strictly a development environment, never where
+      // hardware binding is actually exercised against the real authority.
+      try { result.board = fs.readFileSync('/sys/class/dmi/id/board_serial', 'utf8').trim(); } catch { /* often root-only — fine to skip */ }
+      try { result.systemUuid = fs.readFileSync('/sys/class/dmi/id/product_uuid', 'utf8').trim(); } catch { /* same */ }
+    }
+  } catch (err) {
+    console.error('Hardware ID collection failed:', err.message);
+  }
+
+  // If every field came back empty (a VM with stripped SMBIOS, a permission
+  // issue, a non-Windows dev machine), fall back to a random value persisted
+  // under userData — still a stable per-installation identity (survives
+  // restarts, so binding still works), just not tied to physical hardware.
+  // This does NOT mask a genuine hardware change on a real Windows install:
+  // all four WMI fields failing at once there isn't a realistic case — it
+  // only covers environments the real fields were never expected to work in.
+  if (!result.board && !result.systemUuid && !result.disk && !result.cpu) {
+    const fallbackFile = path.join(app.getPath('userData'), '.hardware-fallback-id');
+    try {
+      result.board = fs.readFileSync(fallbackFile, 'utf8').trim();
+    } catch {
+      result.board = crypto.randomUUID();
+      try {
+        fs.mkdirSync(path.dirname(fallbackFile), { recursive: true });
+        fs.writeFileSync(fallbackFile, result.board);
+      } catch { /* best effort — worst case this just re-generates next launch */ }
+    }
+  }
+
+  _cachedHardwareComponents = result;
+  return result;
+}
+
+ipcMain.handle('get-hardware-components', () => collectHardwareComponents());
 
 // Native print dialog (used by the receipt/report flows).
 ipcMain.handle('print', (e) => {

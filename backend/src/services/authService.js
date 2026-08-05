@@ -8,11 +8,14 @@ import { PERMISSIONS } from '../config/permissions.js';
 import { licenseService } from './licenseService.js';
 import { deviceService } from './deviceService.js';
 import { sessionService } from './sessionService.js';
+import { hardwareBindingService } from './hardwareBindingService.js';
+import { licenseAuthorityClient } from './licenseAuthorityClient.js';
 import { buildFingerprint, classifyDeviceType } from '../utils/device.js';
 import { withLock } from '../utils/lock.js';
 import { signOfflinePayload } from '../utils/offlineLicenseCrypto.js';
 import { connectivity } from '../sync/connectivity.js';
 import { isSupabaseConfigured } from '../config/index.js';
+import { getTrustedNow } from '../utils/trustedTime.js';
 
 const store = secureStore();
 
@@ -95,7 +98,7 @@ export const authService = {
     // the date directly so an admin is sent to the activation screen on the very
     // first login after it lapses, instead of a hard rejection followed only later
     // by the activation screen once something else has triggered the flip.
-    const isExpired = license.status === 'expired' || (license.status === 'active' && new Date(license.expirationDate) < new Date());
+    const isExpired = license.status === 'expired' || (license.status === 'active' && new Date(license.expirationDate).getTime() < getTrustedNow());
 
     // ADMIN can log in even when the license was never activated, or has expired,
     // but only receives a flag telling the frontend to show the activation screen.
@@ -240,7 +243,7 @@ export const authService = {
     };
   },
 
-  async activateRestaurantLicense({ username, password, token, fingerprint, deviceName, operatingSystem, ipAddress }) {
+  async activateRestaurantLicense({ username, password, token, fingerprint, deviceName, operatingSystem, ipAddress, hardwareComponents }) {
     // Same disambiguation-only hints as loginRestaurantUser — must not exclude
     // a legitimate user in a different restaurant (see comment there).
     const allDevices = await store.findAll('devices');
@@ -276,8 +279,19 @@ export const authService = {
       }
     }
 
-    const license = await licenseService.activateLicense(user.restaurantId, token);
-    return this.loginRestaurantUser({
+    // The actual token-redemption WRITE happens in exactly one place — see
+    // config.isLicenseAuthority's own comment. On a packaged desktop install
+    // (the common case), this is a real HTTPS call to the centrally-hosted
+    // authority with no local fallback: that's what makes "activation
+    // requires the internet" a structural fact rather than something
+    // defeated by editing local files or spoofing connectivity.
+    if (config.isLicenseAuthority) {
+      await licenseService.activateLicense(user.restaurantId, token);
+    } else {
+      await licenseAuthorityClient.activate({ username, password, token });
+    }
+
+    const result = await this.loginRestaurantUser({
       username,
       password,
       fingerprint,
@@ -285,6 +299,58 @@ export const authService = {
       operatingSystem,
       ipAddress,
     });
+
+    // Hardware binding happens AFTER login, not before — it needs a real
+    // device id (a restaurant can run several devices under one license,
+    // maximumDevices defaults to 2, so binding must be per-DEVICE, never a
+    // single restaurant-wide identity that a second legitimate machine would
+    // immediately collide with). loginRestaurantUser just created/reused
+    // this device's row, so result.device.id is guaranteed to exist.
+    if (hardwareComponents && result.device?.id) {
+      if (config.isLicenseAuthority) {
+        await hardwareBindingService.verifyOrBind({ restaurantId: user.restaurantId, deviceId: result.device.id, components: hardwareComponents });
+      } else {
+        await licenseAuthorityClient.bindHardware({ restaurantId: user.restaurantId, deviceId: result.device.id, hardwareComponents });
+      }
+    }
+
+    return result;
+  },
+
+  /**
+   * The License Authority's own side of activation (see
+   * config.isLicenseAuthority) — called either locally (this instance IS
+   * the authority) or over HTTPS by a non-authority instance's
+   * activateRestaurantLicense above. Deliberately independent of whatever
+   * the caller already checked: verifies credentials AND redeems the token
+   * AND binds hardware itself, since the caller could in principle be
+   * compromised or bypassed entirely (someone hitting this endpoint
+   * directly). Returns license status only — no JWT/device/offline-license;
+   * those are minted locally by whichever instance the user is actually
+   * running against (loginRestaurantUser), which is the one whose
+   * JWT_SECRET that install's own requests will be verified against.
+   */
+  async activateLicenseCentrally({ username, password, token }) {
+    const allUsers = await store.findAll('users');
+    const candidates = allUsers.filter((u) => u.username === username);
+    let user = null;
+    for (const candidate of candidates) {
+      const ok = await verifyPassword(password, candidate.passwordHash || '');
+      if (ok) { user = candidate; break; }
+    }
+    if (!user) throw new HttpError(401, 'Invalid credentials');
+    if (normalizeRole(user.role) !== 'ADMIN') throw new HttpError(403, 'Only restaurant admins can activate licenses');
+
+    // Hardware binding happens separately, per-device, once a device id
+    // exists (see activateRestaurantLicense's own comment on why it can't
+    // happen here) — this call only redeems the token and flips the license.
+    await licenseService.activateLicense(user.restaurantId, token);
+    const license = await licenseService.getLicenseByRestaurant(user.restaurantId);
+    return {
+      activated: true,
+      restaurantId: user.restaurantId,
+      license: { status: license.status, expirationDate: license.expirationDate },
+    };
   },
 
   async loginSuperAdmin({ username, password, ipAddress }) {
@@ -355,12 +421,12 @@ export const authService = {
    * forward again.
    */
   computeMonthlyValidationDeadline(lastOnlineValidationAt) {
-    const base = lastOnlineValidationAt ? new Date(lastOnlineValidationAt).getTime() : Date.now();
+    const base = lastOnlineValidationAt ? new Date(lastOnlineValidationAt).getTime() : getTrustedNow();
     return new Date(base + MONTHLY_VALIDATION_MS).toISOString();
   },
 
   generateOfflineLicense({ restaurantId, licenseId, deviceId, fingerprint, expirationDate, offlineDays, validationIntervalHours, monthlyValidationDeadline }) {
-    const validatedAt = new Date();
+    const validatedAt = new Date(getTrustedNow());
     const offlineUntil = new Date(validatedAt);
     offlineUntil.setDate(offlineUntil.getDate() + offlineDays);
     const payload = {

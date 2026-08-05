@@ -15,7 +15,7 @@ import { isNetworkError } from '../utils/isNetworkError.js';
  * through the typed pgInsert/pgUpdate/pgRemove helpers below instead of the
  * generic JSONB upsert.
  */
-export const SECURE_COLLECTIONS = ['restaurants', 'users', 'super_admins', 'licenses', 'devices', 'login_sessions'];
+export const SECURE_COLLECTIONS = ['restaurants', 'users', 'super_admins', 'licenses', 'devices', 'login_sessions', 'activation_tokens', 'hardware_bindings'];
 
 let _mode = null; // only ever used for the startup log line now — no longer freezes routing
 

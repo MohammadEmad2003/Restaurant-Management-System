@@ -1,0 +1,40 @@
+# Production Postgres for Bella Cucina RMS — a single lean database container,
+# not a full Supabase stack: the backend (backend/src/config/database.js) only
+# ever talks raw Postgres via DATABASE_URL, so nothing else from Supabase's CLI
+# stack (GoTrue, Kong, Storage, Realtime, Studio, ...) is needed in production.
+#
+# This is the shared sync target every restaurant's .exe install (embedded
+# backend, see frontend/electron/main.js) connects to directly over the
+# internet — hence SSL is mandatory here, not optional.
+#
+# Usage: docker compose -p restaurant-prod -f deploy/docker-compose.db.yml --env-file deploy/.env.db up -d
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+    ports:
+      - "0.0.0.0:5434:5432"
+    volumes:
+      - restaurant_pgdata:/var/lib/postgresql/data
+      - ./postgres-ssl/server.crt:/var/lib/postgresql/server.crt:ro
+      - ./postgres-ssl/server.key:/var/lib/postgresql/server.key:ro
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/var/lib/postgresql/server.crt
+      - -c
+      - ssl_key_file=/var/lib/postgresql/server.key
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  restaurant_pgdata:

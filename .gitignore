@@ -13,6 +13,12 @@ backend/src/data/
 .env.local
 .env.*.local
 
+# Production deploy secrets (generated on the server, never committed)
+deploy/.env.db
+deploy/.secrets*
+deploy/postgres-ssl/server.key
+deploy/CREDENTIALS.md
+
 # Debug/test scratch scripts & PDF output
 backend/test-*.js
 backend/test-*.pdf

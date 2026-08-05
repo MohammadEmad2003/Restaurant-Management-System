@@ -12,7 +12,7 @@ export default defineConfig({
     // so a silent port change there would leave it pointed at nothing.
     strictPort: true,
     proxy: {
-      '/api': { target: 'http://localhost:4000', changeOrigin: true },
+      '/api': { target: 'http://localhost:8090', changeOrigin: true },
     },
   },
   // `npm run preview` (vite preview, port 4173) serves the production build
